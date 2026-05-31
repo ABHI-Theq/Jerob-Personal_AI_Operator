@@ -1,0 +1,131 @@
+import chalk from "chalk";
+import { password, text, confirm,isCancel } from "@clack/prompts";
+import { hashPassword, verifyPassword, encrypt, decrypt } from "./crypto";
+import { loadConfig, saveConfig, isConfigured } from "./config-store";
+import type {StoredConfig} from "./config-store";
+
+/**
+ * First-time setup: create account and set API key
+ */
+export async function setupAuth(): Promise<StoredConfig> {
+  console.log(chalk.bold("\n🔐 Initial Setup\n"));
+
+  const username = await text({
+    message: "Create username",
+    placeholder: "your-username",
+    validate: (v) => {
+      if (!v?.trim()) return "Username required";
+      if (v.length < 3) return "Min 3 characters";
+      if (!/^[a-zA-Z0-9_-]+$/.test(v)) return "Alphanumeric + - _ only";
+    },
+  });
+  if (isCancel(username)) throw new Error("Setup cancelled");
+
+  const pwd = await password({
+    message: "Create password",
+    validate: (v) => {
+      if (!v || v.length < 6) return "Min 6 characters";
+    },
+  });
+  if (isCancel(pwd)) throw new Error("Setup cancelled");
+
+  const pwdConfirm = await password({
+    message: "Confirm password",
+  });
+  if (isCancel(pwdConfirm)) throw new Error("Setup cancelled");
+
+  if (pwd !== pwdConfirm) {
+    console.log(chalk.red("❌ Passwords don't match\n"));
+    return setupAuth();
+  }
+
+  const apiKey = await text({
+    message: "OpenRouter API Key (from openrouter.ai)",
+    placeholder: "sk-or-v1-...",
+    validate: (v) => {
+      if (!v?.trim()) return "API key required";
+      if (!v.includes("sk-")) return "Invalid OpenRouter key format";
+    },
+  });
+  if (isCancel(apiKey)) throw new Error("Setup cancelled");
+
+  const passwordHash = hashPassword(pwd as string);
+  const encryptedApiKey = encrypt(apiKey as string, pwd as string);
+
+  const config: StoredConfig = {
+    username: username as string,
+    passwordHash,
+    apiKey: encryptedApiKey,
+    lastLogin: Date.now(),
+  };
+
+  saveConfig(config);
+  console.log(chalk.green("\n✓ Setup complete!\n"));
+  return config;
+}
+
+/**
+ * Login with username and password
+ */
+export async function loginAuth(): Promise<StoredConfig> {
+  const config = loadConfig();
+  if (!config) return setupAuth();
+
+  console.log(chalk.bold(`\n🔑 Login\n`));
+
+  const enteredUsername = await text({
+    message: "Username",
+    placeholder: config.username,
+  });
+  if (isCancel(enteredUsername)) throw new Error("Login cancelled");
+
+  if (enteredUsername !== config.username) {
+    console.log(chalk.red("❌ Username mismatch\n"));
+    return loginAuth();
+  }
+
+  const enteredPassword = await password({
+    message: "Password",
+  });
+  if (isCancel(enteredPassword)) throw new Error("Login cancelled");
+
+  if (!verifyPassword(enteredPassword as string, config.passwordHash)) {
+    console.log(chalk.red("❌ Wrong password\n"));
+    return loginAuth();
+  }
+
+  config.lastLogin = Date.now();
+  saveConfig(config);
+  console.log(chalk.green(`\n✓ Welcome back, ${config.username}!\n`));
+  return config;
+}
+
+/**
+ * Get decrypted API key from config
+ */
+export function getApiKey(config: StoredConfig, password: string): string {
+  try {
+    return decrypt(config.apiKey, password);
+  } catch {
+    throw new Error("Failed to decrypt API key");
+  }
+}
+
+/**
+ * Run auth flow: login or setup
+ */
+export async function authenticate(): Promise<{ config: StoredConfig; password: string }> {
+  const config = isConfigured() ? await loginAuth() : await setupAuth();
+
+  const pwd = await password({
+    message: "Confirm password for this session",
+  });
+  if (isCancel(pwd)) throw new Error("Authentication cancelled");
+
+  if (!verifyPassword(pwd as string, config.passwordHash)) {
+    console.log(chalk.red("❌ Wrong password\n"));
+    return authenticate();
+  }
+
+  return { config, password: pwd as string };
+}
