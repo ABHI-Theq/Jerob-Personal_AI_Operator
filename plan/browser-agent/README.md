@@ -1,224 +1,118 @@
-# Browser Agent System
+# Browser Agent
 
-A complete browser automation system with iterative refinement using Plan → Execute → Evaluate → Iterate (max 5 cycles).
+Autonomous browser automation using Stagehand's agent API with an iterative Plan → Execute → Evaluate loop (up to 5 cycles).
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    User Query                              │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│  ITERATION LOOP (Max 5 iterations)                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  1. PLANNER                                          │  │
-│  │  • Parse query with optional feedback               │  │
-│  │  • Generate detailed browser automation plan        │  │
-│  │  • Create step-by-step instructions                 │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                      │                                      │
-│                      ▼                                      │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  2. EXECUTOR                                         │  │
-│  │  • Execute plan steps using Stagehand               │  │
-│  │  • Navigate, click, type, extract, observe         │  │
-│  │  • Collect results and extracted data              │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                      │                                      │
-│                      ▼                                      │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  3. EVALUATOR                                        │  │
-│  │  • Score execution (0-100)                          │  │
-│  │  • Measure completeness & accuracy                  │  │
-│  │  • Identify issues and gaps                         │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                      │                                      │
-│                      ▼                                      │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  4. DECISION                                         │  │
-│  │  ✓ Satisfied? → Return result                       │  │
-│  │  ✗ Max iterations? → Return best result             │  │
-│  │  ✗ Continue? → Feed feedback to Planner             │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                      │                                      │
-└──────────────────────┼──────────────────────────────────────┘
-                       │
-                       ▼
-            ┌──────────────────────┐
-            │  Final Result        │
-            │  • Success status    │
-            │  • Extracted data    │
-            │  • Iteration log     │
-            └──────────────────────┘
+User Query
+    │
+    ▼
+┌─────────────────────────────────────┐
+│  ITERATION LOOP (max 5)             │
+│                                     │
+│  1. PLANNER                         │
+│     LLM generates automation plan  │
+│     (with feedback on retry)        │
+│             │                       │
+│             ▼                       │
+│  2. EXECUTOR                        │
+│     Stagehand agent() runs the task │
+│     autonomously via DOM mode       │
+│             │                       │
+│             ▼                       │
+│  3. EVALUATOR                       │
+│     Scores result 0-100             │
+│     Checks completeness & accuracy  │
+│             │                       │
+│             ▼                       │
+│  4. DECISION                        │
+│     score ≥ 80  → done              │
+│     max iters   → return best       │
+│     otherwise   → feedback → retry  │
+└─────────────────────────────────────┘
+    │
+    ▼
+Final Result (console + optional JSON/MD save)
 ```
 
-## Components
+## Files
 
-### 1. **types.ts**
-- `BrowserPlan` - Automation plan structure
-- `BrowserStep` - Individual action step
-- `ExecutionResult` - Step execution outcome
-- `EvaluationResult` - Quality assessment
-- `IterationResult` - Complete iteration cycle
-- `BrowserAgentConfig` - Configuration options
-- `BrowserAgentResult` - Final result
+| File | Role |
+|------|------|
+| `orchestrator.ts` | Entry point, manages iteration loop, renders report |
+| `planner.ts` | LLM generates a `BrowserPlan` (steps + goal + reasoning) |
+| `executor.ts` | Runs plan via Stagehand `agent()` in DOM mode, parses messages |
+| `evaluator.ts` | Scores execution, extracts feedback for next iteration |
+| `types.ts` | Shared TypeScript types |
+| `index.ts` | Re-exports all public API |
 
-### 2. **planner.ts**
-- `generateBrowserPlan(query, feedback?)` 
-  - Uses LLM to create automation plan
-  - Incorporates feedback from previous iterations
-  - Generates concrete, actionable steps
+## Browser Setup
 
-### 3. **executor.ts**
-- `executeBrowserPlan(plan)` - Runs all steps
-- Supports actions:
-  - `navigate` - Go to URL
-  - `click` - Click elements
-  - `type` - Type text
-  - `extract` - Extract structured data
-  - `observe` - Analyze available actions
-  - `wait` - Wait for delay
-  - `scroll` - Scroll page
-- `closeStagehand()` - Cleanup
+Uses Brave browser with a persistent profile for sites that require login (e.g. LinkedIn):
 
-### 4. **evaluator.ts**
-- `evaluateExecutionResults()` - Quality scoring
-  - Score: 0-100
-  - Completeness: 0-100
-  - Accuracy: 0-100
-  - Issues: Array of problems
-- `shouldContinueIterating()` - Decide to retry
-- `extractFeedbackForNextIteration()` - Prepare feedback
-
-### 5. **orchestrator.ts**
-- `runBrowserAgentMode()` - Main entry point
-- Manages iteration loop
-- Coordinates all components
-- Handles user interaction
-- Saves results optionally
-
-## Usage
-
-### CLI Entry Point
-```bash
-jimmy jet
-# Select "Browser Agent" from menu
-# Enter your query
-```
-
-### Query Examples
-```
-"Find top 5 AI jobs on LinkedIn and get their descriptions"
-"Search for flights from NYC to LA for next week under $300"
-"Extract all product names and prices from the homepage"
-"Sign up for newsletter with email test@example.com"
+```ts
+localBrowserLaunchOptions: {
+  executablePath: "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+  args: [
+    '--user-data-dir=C:\\Users\\YOUR_USERNAME\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data',
+    '--profile-directory=Default',
+  ],
+  headless: false,
+}
 ```
 
 ## Configuration
 
-**Default Config** (in orchestrator.ts):
-```typescript
+In `orchestrator.ts`:
+
+```ts
 {
-  maxIterations: 5,           // Max retry cycles
-  timeout: 120000,             // 2 minutes
+  maxIterations: 5,
+  timeout: 120000,
   model: "google/gemini-3.1-flash-lite-preview",
-  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-  evaluationThreshold: 80      // 80/100 to mark satisfied
+  evaluationThreshold: 80   // score out of 100 to mark as satisfied
 }
 ```
-
-## Iteration Flow Example
-
-### Iteration 1
-- **Plan**: Navigate → Observe → Extract
-- **Execute**: All steps succeed
-- **Evaluate**: Score 65/100 (incomplete data)
-- **Decision**: Continue (not satisfied)
-
-### Iteration 2
-- **Plan** (with feedback): Navigate → Search → Wait → Scroll → Extract
-- **Execute**: All steps succeed
-- **Evaluate**: Score 85/100 (complete, minor issues)
-- **Decision**: Continue (score < threshold)
-
-### Iteration 3
-- **Plan** (refined): Navigate → Interact → Extract → Verify
-- **Execute**: All succeed
-- **Evaluate**: Score 95/100 (satisfied!)
-- **Decision**: ✓ Complete, return result
-
-## Output Format
-
-### Console Output
-- Iteration count and status
-- Plan visualization
-- Execution progress
-- Evaluation scores and feedback
-- Extracted data
-- Final summary
-
-### Saved JSON
-```json
-{
-  "success": true,
-  "query": "...",
-  "finalData": { ... },
-  "iterations": [
-    {
-      "iteration": 1,
-      "plan": { ... },
-      "execution": [ ... ],
-      "evaluation": { ... },
-      "shouldContinue": true
-    }
-  ],
-  "totalIterations": 3,
-  "completedAt": "2026-06-02T10:30:45.123Z"
-}
-```
-
-## Error Handling
-
-- **Plan Generation**: Catch and report LLM errors
-- **Execution**: Continue on non-critical steps, stop on navigation failure
-- **Evaluation**: Graceful fallback with default scores
-- **Browser**: Automatic cleanup on exit
-
-## Integration with Existing System
-
-✅ **Preserved Functionality:**
-- Agent Mode - unchanged
-- Plan Mode - unchanged  
-- Ask Mode - unchanged
-- CLI navigation - enhanced
-
-✅ **New Features:**
-- Browser Agent menu option
-- No breaking changes
-- Optional feature
-
-## Dependencies
-
-- `@browserbasehq/stagehand` - Browser automation
-- `ai` - LLM integration
-- `@clack/prompts` - CLI prompts
-- `chalk` - Terminal colors
-- `zod` - Schema validation
 
 ## Environment Variables
 
 ```
-GOOGLE_GENERATIVE_AI_API_KEY=...  # For Stagehand
+GOOGLE_GENERATIVE_AI_API_KEY=...
 ```
 
-## Status
+## Usage
 
-✅ Fully implemented and integrated
-✅ Error handling included
-✅ No breaking changes
-✅ Type-safe with TypeScript
-✅ Production ready
+```bash
+jimmy jet
+# Select "Browser Agent" from the menu
+# Enter your query
+```
+
+Example queries:
+```
+Find top 5 AI jobs on LinkedIn with full descriptions
+Get transcript of a YouTube video
+Extract product prices from a homepage
+Search flights NYC to LA under $300
+```
+
+## Supported Step Actions (Planner)
+
+`navigate` · `click` · `type` · `extract` · `observe` · `wait` · `scroll`
+
+> The executor doesn't run these step-by-step — it passes the plan goal directly to Stagehand's `agent()` which handles navigation autonomously.
+
+## Output
+
+After each run you can optionally save:
+- JSON file with full iteration log + extracted data
+- Markdown report with scores and agent output
+
+## Dependencies
+
+- `@browserbasehq/stagehand` — browser automation
+- `ai` + `@openrouter/ai-sdk-provider` — LLM calls
+- `@clack/prompts` — CLI prompts
+- `chalk` — terminal colors
+- `zod` — schema validation
