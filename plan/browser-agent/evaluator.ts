@@ -129,14 +129,23 @@ export async function evaluateExecutionResults(
     .filter((r) => !r.success)
     .map((r) => `Step ${r.stepNumber} (${r.action}): ${r.error}`);
 
+  // Check if this is an agent-based result (single entry with agentOutput)
+  const agentResult = results[0];
+  const agentOutput = agentResult?.agentOutput ?? "";
+  const agentData = agentResult?.data
+    ? JSON.stringify(agentResult.data, null, 2)
+    : "";
+
   const executionSummary = `
 Plan Goal: ${plan.goal}
 Query: ${query}
-Executed Steps: ${results.length}
-Successful Steps: ${successfulResults.length}
-Failed Steps: ${failedSteps.length}
+Agent Completed: ${agentResult?.success ? "Yes" : "No"}
+${agentResult?.error ? `Error: ${agentResult.error}` : ""}
 
-${failedSteps.length > 0 ? `Failures:\n${failedSteps.join("\n")}` : ""}
+Agent Output:
+${agentOutput || "(no text output)"}
+
+${agentData ? `Extracted Data:\n${agentData}` : ""}
 
 Execution Details:
 ${results.map((r) => `- Step ${r.stepNumber} (${r.action}): ${r.message}`).join("\n")}

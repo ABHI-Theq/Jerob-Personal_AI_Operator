@@ -24,9 +24,24 @@ const getStagehandClient = () => {
   if (!globalstageHand) {
     globalstageHand = new Stagehand({
       env: "LOCAL",
-      localBrowserLaunchOptions: {
-        headless: false,
-      },
+          localBrowserLaunchOptions: {
+    headless: false, // Show browser window
+    devtools: false, // Open developer tools
+    port: 9222, // Fixed CDP debugging port
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-web-security',
+      '--allow-running-insecure-content',
+    ],
+    ignoreHTTPSErrors: true, // Ignore certificate errors
+    locale: 'en-US', // Set browser language
+    deviceScaleFactor: 1.0, // Display scaling
+    downloadsPath: './downloads', // Download directory
+    acceptDownloads: true, // Allow downloads
+    connectTimeoutMs: 30000, // Connection timeout
+    executablePath:"C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+  },
       model: {
         modelName: "google/gemini-3.1-flash-lite-preview",
         apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
@@ -95,7 +110,7 @@ Only call done when all 6 checks pass.
 
   const res = await agent.execute({
     instruction: query,
-    maxSteps: 15,
+    maxSteps: 10,
     highlightCursor: true,
   });
 
@@ -109,5 +124,5 @@ Only call done when all 6 checks pass.
 };
 
 browserSearch(
-  "find top 5 AI field jobs available and get a detailed Job description about each one",
+  `get transcript of video rag is dead from youtube on piyush garg`,
 );

@@ -21,6 +21,9 @@ export interface ExecutionResult {
   message: string;
   stepNumber: number;
   action: string;
+  // Raw output from stagehand agent
+  agentOutput?: string;
+  agentMessages?: unknown[];
 }
 
 export interface IterationResult {

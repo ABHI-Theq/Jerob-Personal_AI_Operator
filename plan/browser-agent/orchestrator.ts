@@ -24,11 +24,6 @@ const DEFAULT_CONFIG: BrowserAgentConfig = {
 
 export async function runBrowserAgentMode(): Promise<void> {
   console.log(chalk.bold("\n🌐 Browser Agent Mode\n"));
-  console.log(
-    chalk.dim(
-      "Plan → Execute → Evaluate → Iterate (max 5 times for optimal results)\n"
-    )
-  );
 
   const queryInput = await text({
     message: "What would you like the browser agent to do?",
@@ -42,6 +37,15 @@ export async function runBrowserAgentMode(): Promise<void> {
     return;
   }
 
+  const liveOutput = await confirm({
+    message: "Show live iteration output?",
+    initialValue: false,
+  });
+
+  const maybeLog = (...args: any[]) => {
+    if (liveOutput) console.log(...args);
+  };
+
   const config = { ...DEFAULT_CONFIG };
   const iterations: IterationResult[] = [];
   let iteration = 0;
@@ -52,131 +56,98 @@ export async function runBrowserAgentMode(): Promise<void> {
   try {
     while (iteration < config.maxIterations) {
       iteration++;
-      console.log(chalk.bold(`\n📋 Iteration ${iteration}/${config.maxIterations}`));
+      maybeLog(chalk.bold(`\n📋 Iteration ${iteration}/${config.maxIterations}`));
 
       // PLAN PHASE
-      console.log(chalk.cyan("Planning..."));
       let plan;
       try {
-        plan = await withSpinner("Generating browser automation plan...", () =>
-          generateBrowserPlan(query, previousFeedback)
+        plan = await withSpinner(
+          `[${iteration}/${config.maxIterations}] Planning...`,
+          () => generateBrowserPlan(query, previousFeedback)
         );
       } catch (error) {
         console.log(
-          chalk.red(
-            `Plan generation failed: ${error instanceof Error ? error.message : String(error)}`
-          )
+          chalk.red(`Plan failed: ${error instanceof Error ? error.message : String(error)}`)
         );
         throw error;
       }
 
-      console.log(chalk.green(`✓ Plan created with ${plan.steps.length} steps`));
-      console.log(chalk.dim(`Goal: ${plan.goal}`));
-      console.log(chalk.dim(`Reasoning: ${plan.reasoning}`));
+      maybeLog(chalk.dim(`Goal: ${plan.goal}`));
+      maybeLog(chalk.dim(`Reasoning: ${plan.reasoning}`));
 
-      // Display plan steps
-      console.log(chalk.cyan("\nPlan Steps:"));
-      plan.steps.forEach((step: any) => {
-        console.log(
-          chalk.dim(`  ${step.id}. ${step.action}: ${step.description}`)
-        );
-      });
-
-      // EXECUTE PHASE
-      console.log(chalk.cyan("\n\nExecuting plan..."));
+      // EXECUTE PHASE — Stagehand agent() runs the task autonomously
       let execution;
       try {
-        execution = await withSpinner("Running browser automation...", () =>
-          executeBrowserPlan(plan)
+        execution = await withSpinner(
+          `[${iteration}/${config.maxIterations}] Browser agent running...`,
+          () => executeBrowserPlan(plan, previousFeedback)
         );
       } catch (error) {
         console.log(
-          chalk.red(
-            `Execution failed: ${error instanceof Error ? error.message : String(error)}`
-          )
+          chalk.red(`Execution failed: ${error instanceof Error ? error.message : String(error)}`)
         );
         throw error;
       }
 
-      const successCount = execution.filter((r: any) => r.success).length;
-      console.log(chalk.green(`✓ Executed: ${successCount}/${execution.length} steps succeeded`));
-
-      // Collect extracted data
-      execution.forEach((result: any) => {
-        if (result.data) {
+      // Collect extracted data from agent
+      for (const result of execution) {
+        if (result.data != null) {
           finalData = result.data;
         }
-      });
+      }
+
+      const agentResult = execution[0];
+      maybeLog(
+        agentResult?.success
+          ? chalk.green(`✓ Agent completed task`)
+          : chalk.red(`✗ Agent did not complete task`)
+      );
+      if (agentResult?.agentOutput) {
+        maybeLog(chalk.dim(`Output: ${agentResult.agentOutput}`));
+      }
 
       // EVALUATE PHASE
-      console.log(chalk.cyan("\nEvaluating results..."));
       let evaluation;
       try {
-        evaluation = await withSpinner("Evaluating execution quality...", () =>
-          evaluateExecutionResults(
-            query,
-            plan,
-            execution,
-            config.evaluationThreshold
-          )
+        evaluation = await withSpinner(
+          `[${iteration}/${config.maxIterations}] Evaluating...`,
+          () => evaluateExecutionResults(query, plan, execution, config.evaluationThreshold)
         );
       } catch (error) {
         console.log(
-          chalk.red(
-            `Evaluation failed: ${error instanceof Error ? error.message : String(error)}`
-          )
+          chalk.red(`Evaluation failed: ${error instanceof Error ? error.message : String(error)}`)
         );
         throw error;
       }
 
-      console.log(chalk.cyan(`\nEvaluation Score: ${evaluation.score}/100`));
-      console.log(chalk.dim(`Feedback: ${evaluation.feedback}`));
-      console.log(chalk.dim(`Completeness: ${evaluation.completeness}%`));
-      console.log(chalk.dim(`Accuracy: ${evaluation.accuracy}%`));
-
-      if (evaluation.issues.length > 0) {
-        console.log(chalk.yellow(`Issues found:`));
-        evaluation.issues.forEach((issue: string) => {
-          console.log(chalk.yellow(`  • ${issue}`));
-        });
-      }
+      maybeLog(chalk.cyan(`Score: ${evaluation.score}/100 | Completeness: ${evaluation.completeness}% | Accuracy: ${evaluation.accuracy}%`));
+      maybeLog(chalk.dim(`Feedback: ${evaluation.feedback}`));
 
       lastEvaluation = evaluation;
 
-      // Store iteration result
       iterations.push({
         iteration,
         plan,
         execution,
         evaluation,
-        shouldContinue: shouldContinueIteratingLocal(
-          evaluation,
-          iteration,
-          config.maxIterations
-        ),
+        shouldContinue: !evaluation.satisfied && iteration < config.maxIterations,
       });
 
-      // CHECK IF SHOULD CONTINUE
       if (evaluation.satisfied) {
-        console.log(chalk.green.bold(`\n✓ Task completed successfully!\n`));
+        maybeLog(chalk.green.bold(`\n✓ Task satisfied!\n`));
         break;
       }
 
       if (iteration >= config.maxIterations) {
-        console.log(
-          chalk.yellow(
-            `\n⚠ Max iterations (${config.maxIterations}) reached. Returning best result.\n`
-          )
-        );
+        maybeLog(chalk.yellow(`\n⚠ Max iterations reached.\n`));
         break;
       }
 
-      // Prepare feedback for next iteration
       previousFeedback = extractFeedbackForNextIteration(evaluation);
-      console.log(chalk.yellow(`\nRetrying with feedback for next iteration...`));
+      maybeLog(chalk.yellow(`Retrying with feedback...`));
     }
 
-    // FINAL RESULT
+    // BUILD CONSOLIDATED RESULT
     const result: BrowserAgentResult = {
       success: lastEvaluation?.satisfied || false,
       query,
@@ -184,21 +155,28 @@ export async function runBrowserAgentMode(): Promise<void> {
       iterations,
       totalIterations: iteration,
       completedAt: new Date().toISOString(),
-      error: lastEvaluation?.satisfied ? undefined : "Max iterations reached",
+      error: lastEvaluation?.satisfied ? undefined : "Max iterations reached without full satisfaction",
     };
 
-    console.log(chalk.bold("\n═════════════════════════════════════════"));
-    console.log(chalk.bold("📊 Browser Agent Execution Summary"));
-    console.log(chalk.bold("═════════════════════════════════════════\n"));
+    // CONSOLIDATED OUTPUT
+    console.log(chalk.bold("\n═══════════════════════════════════════════"));
+    console.log(chalk.bold("📊 Browser Agent Result"));
+    console.log(chalk.bold("═══════════════════════════════════════════\n"));
 
-    console.log(`Query: ${chalk.cyan(query)}`);
-    console.log(`Status: ${result.success ? chalk.green("✓ Succeeded") : chalk.red("✗ Incomplete")}`);
-    console.log(`Total Iterations: ${iteration}/${config.maxIterations}`);
+    console.log(`Query:      ${chalk.cyan(query)}`);
+    console.log(`Status:     ${result.success ? chalk.green("✓ Succeeded") : chalk.yellow("⚠ Partial")}`);
+    console.log(`Iterations: ${iteration}/${config.maxIterations}`);
 
     if (lastEvaluation) {
-      console.log(`Final Score: ${chalk.cyan(`${lastEvaluation.score}/100`)}`);
-      console.log(`Completeness: ${chalk.cyan(`${lastEvaluation.completeness}%`)}`);
-      console.log(`Accuracy: ${chalk.cyan(`${lastEvaluation.accuracy}%`)}`);
+      console.log(`Score:      ${chalk.cyan(`${lastEvaluation.score}/100`)}`);
+      console.log(`Complete:   ${chalk.cyan(`${lastEvaluation.completeness}%`)}`);
+    }
+
+    // Show final agent output if available
+    const lastExecution = iterations[iterations.length - 1]?.execution[0];
+    if (lastExecution?.agentOutput) {
+      console.log(chalk.bold("\n🤖 Agent Output:"));
+      console.log(chalk.white(lastExecution.agentOutput));
     }
 
     if (finalData) {
@@ -206,17 +184,22 @@ export async function runBrowserAgentMode(): Promise<void> {
       console.log(chalk.dim(JSON.stringify(finalData, null, 2)));
     }
 
-    console.log(chalk.bold("\n═════════════════════════════════════════\n"));
+    if (lastEvaluation?.feedback) {
+      console.log(chalk.bold("\n💬 Final Feedback:"));
+      console.log(chalk.dim(lastEvaluation.feedback));
+    }
 
+    console.log(chalk.bold("\n═══════════════════════════════════════════\n"));
+
+    // Render markdown report
     const reportMarkdown = buildBrowserAgentMarkdownReport(result);
-
-    console.log(chalk.bold("\n📄 Browser Agent Markdown Report\n"));
+    console.log(chalk.bold("📄 Report\n"));
     console.log(renderHTMLMarkdown(reportMarkdown));
+    console.log(chalk.bold("\n═══════════════════════════════════════════\n"));
 
-    console.log(chalk.bold("\n═════════════════════════════════════════\n"));
-
+    // Save options
     const shouldSaveJson = await confirm({
-      message: "Save execution results to JSON file?",
+      message: "Save results to JSON file?",
       initialValue: false,
     });
 
@@ -226,7 +209,7 @@ export async function runBrowserAgentMode(): Promise<void> {
       const filename = `browser-agent-result-${Date.now()}.json`;
       const filepath = path.resolve(process.cwd(), filename);
       fs.writeFileSync(filepath, JSON.stringify(result, null, 2), "utf8");
-      console.log(chalk.green(`\n✓ JSON results saved to ${filename}\n`));
+      console.log(chalk.green(`✓ Saved to ${filename}\n`));
     }
 
     const shouldSaveMd = await confirm({
@@ -240,18 +223,16 @@ export async function runBrowserAgentMode(): Promise<void> {
       const filename = `browser-agent-report-${Date.now()}.md`;
       const filepath = path.resolve(process.cwd(), filename);
       fs.writeFileSync(filepath, reportMarkdown, "utf8");
-      console.log(chalk.green(`\n✓ Markdown report saved to ${filename}\n`));
+      console.log(chalk.green(`✓ Saved to ${filename}\n`));
     }
   } catch (error) {
     console.log(chalk.red("\n❌ Browser Agent Error:"));
-    console.log(
-      chalk.red(error instanceof Error ? error.message : String(error))
-    );
+    console.log(chalk.red(error instanceof Error ? error.message : String(error)));
   } finally {
     try {
       await closeStagehand();
-    } catch (error) {
-      console.error("Error closing browser:", error);
+    } catch (err) {
+      console.error("Error closing browser:", err);
     }
   }
 }
@@ -261,83 +242,53 @@ function buildBrowserAgentMarkdownReport(result: BrowserAgentResult): string {
 
   lines.push("# Browser Agent Report\n");
   lines.push(`**Query:** ${result.query}`);
-  lines.push(`**Status:** ${result.success ? "✅ Succeeded" : "❌ Incomplete"}`);
+  lines.push(`**Status:** ${result.success ? "✅ Succeeded" : "⚠️ Partial"}`);
   lines.push(`**Total Iterations:** ${result.totalIterations}`);
   lines.push(`**Completed At:** ${result.completedAt}`);
   if (result.error) {
-    lines.push(`**Error:** ${result.error}`);
+    lines.push(`**Note:** ${result.error}`);
   }
   lines.push("");
 
-  for (const iteration of result.iterations) {
-    lines.push(`## Iteration ${iteration.iteration}\n`);
-    lines.push("### Plan");
-    lines.push(`- **Goal:** ${iteration.plan.goal}`);
-    lines.push(`- **Reasoning:** ${iteration.plan.reasoning}`);
-    lines.push("- **Steps:**");
-    iteration.plan.steps.forEach((step) => {
-      const details = [];
-      if (step.selector) details.push(`selector=${step.selector}`);
-      if (step.value) details.push(`value=${step.value}`);
-      if (step.waitFor) details.push(`waitFor=${step.waitFor}`);
-      lines.push(
-        `  1. **${step.action}** — ${step.description}${
-          details.length > 0 ? ` (${details.join(", ")})` : ""
-        }`
-      );
-      if (step.extractSchema) {
-        lines.push("     - extractSchema:");
-        lines.push("       ```json");
-        lines.push(JSON.stringify(step.extractSchema, null, 4).split("\n").map(l => "       " + l).join("\n"));
-        lines.push("       ```");
-      }
-    });
-    lines.push("");
+  // Only show the last (best) iteration's detail in consolidated mode
+  const lastIteration = result.iterations[result.iterations.length - 1];
+  if (lastIteration) {
+    lines.push("## Final Iteration Result\n");
 
-    lines.push("### Execution");
-    iteration.execution.forEach((res) => {
-      lines.push(`- **Step ${res.stepNumber}** (${res.action}) — ${res.success ? "✅ Success" : "❌ Failure"}`);
-      lines.push(`  - Message: ${res.message}`);
-      if (res.error) {
-        lines.push(`  - Error: ${res.error}`);
-      }
-      if (res.data) {
-        lines.push("  - Data:");
-        lines.push("    ```json");
-        lines.push(JSON.stringify(res.data, null, 4).split("\n").map(l => "    " + l).join("\n"));
-        lines.push("    ```");
-      }
-    });
-    lines.push("");
+    const agentResult = lastIteration.execution[0];
+    if (agentResult?.agentOutput) {
+      lines.push("### Agent Output");
+      lines.push(agentResult.agentOutput);
+      lines.push("");
+    }
 
     lines.push("### Evaluation");
-    lines.push(`- **Satisfied:** ${iteration.evaluation.satisfied ? "Yes" : "No"}`);
-    lines.push(`- **Score:** ${iteration.evaluation.score}/100`);
-    lines.push(`- **Completeness:** ${iteration.evaluation.completeness}%`);
-    lines.push(`- **Accuracy:** ${iteration.evaluation.accuracy}%`);
-    lines.push(`- **Feedback:** ${iteration.evaluation.feedback}`);
-    if (iteration.evaluation.issues.length > 0) {
+    lines.push(`- **Score:** ${lastIteration.evaluation.score}/100`);
+    lines.push(`- **Completeness:** ${lastIteration.evaluation.completeness}%`);
+    lines.push(`- **Accuracy:** ${lastIteration.evaluation.accuracy}%`);
+    lines.push(`- **Feedback:** ${lastIteration.evaluation.feedback}`);
+    if (lastIteration.evaluation.issues.length > 0) {
       lines.push("- **Issues:**");
-      iteration.evaluation.issues.forEach((issue) => {
+      lastIteration.evaluation.issues.forEach((issue) => {
         lines.push(`  - ${issue}`);
       });
     }
     lines.push("");
   }
 
-  lines.push("## Final Data\n");
+  lines.push("## Extracted Data\n");
   lines.push("```json");
   lines.push(JSON.stringify(result.finalData ?? {}, null, 2));
   lines.push("```\n");
+
+  if (result.iterations.length > 1) {
+    lines.push("## Iteration Summary\n");
+    result.iterations.forEach((it) => {
+      lines.push(`- Iteration ${it.iteration}: Score ${it.evaluation.score}/100 — ${it.evaluation.satisfied ? "✅ Satisfied" : "🔄 Continued"}`);
+    });
+    lines.push("");
+  }
+
   lines.push("*Generated by Browser Agent*");
-
   return lines.join("\n");
-}
-
-function shouldContinueIteratingLocal(
-  evaluation: any,
-  iteration: number,
-  maxIterations: number
-): boolean {
-  return !evaluation.satisfied && iteration < maxIterations;
 }

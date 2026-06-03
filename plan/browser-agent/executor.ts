@@ -1,6 +1,5 @@
 import { Stagehand } from "@browserbasehq/stagehand";
 import type { BrowserPlan, ExecutionResult } from "./types";
-import { z } from "zod";
 
 let globalStagehand: InstanceType<typeof Stagehand> | null = null;
 
@@ -8,9 +7,25 @@ function getStagehandClient(): InstanceType<typeof Stagehand> {
   if (!globalStagehand) {
     globalStagehand = new Stagehand({
       env: "LOCAL",
-      localBrowserLaunchOptions: {
-        headless: false,
-      },
+       localBrowserLaunchOptions: {
+    headless: false, // Show browser window
+    // devtools: true, // Open developer tools
+    port: 9222, // Fixed CDP debugging port
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-web-security',
+      '--allow-running-insecure-content',
+    ],
+    chromiumSandbox: false, // Disable sandbox (adds --no-sandbox)
+    ignoreHTTPSErrors: true, // Ignore certificate errors
+    locale: 'en-US', // Set browser language
+    deviceScaleFactor: 1.0, // Display scaling
+    downloadsPath: './downloads', // Download directory
+    acceptDownloads: true, // Allow downloads
+    connectTimeoutMs: 30000, // Connection timeout
+    executablePath:"C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+  },
       model: {
         modelName: "google/gemini-3.1-flash-lite-preview",
         apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
@@ -20,158 +35,255 @@ function getStagehandClient(): InstanceType<typeof Stagehand> {
   return globalStagehand;
 }
 
-export async function executeBrowserPlan(
-  plan: BrowserPlan
-): Promise<ExecutionResult[]> {
-  const stagehand = getStagehandClient();
+// Tools whose output is giant DOM/accessibility blobs — skip entirely
+const SKIP_TOOL_OUTPUT = new Set(["ariaTree", "screenshot", "cdpSnapshot"]);
 
-  if (!stagehand || !globalStagehand) {
-    throw new Error("Stagehand not initialized");
-  }
+/**
+ * Parses stagehand agent messages into a compact, evaluator-friendly transcript.
+ *
+ * Stagehand message shapes (confirmed from live logs):
+ *
+ * assistant: { role:"assistant", content: [
+ *   { type:"tool-call", toolName, input, ... }   <- agent action intent
+ *   { type:"text",      text: "..."           }   <- agent's SUMMARY / reasoning text
+ * ]}
+ *
+ * tool: { role:"tool", content: [
+ *   { type:"tool-result", toolName, output: { type:"json"|"content", value:... } }
+ * ]}
+ *
+ * Strategy:
+ *  - assistant[type=text]       → the agent's written summary/reasoning — MOST VALUABLE
+ *  - done[input.reasoning]      → agent's stated reason for finishing
+ *  - extract[output]            → structured data
+ *  - navigate/act/wait/goto     → one-line confirmation (success + brief detail)
+ *  - ariaTree/screenshot        → SKIPPED (too large, no signal for evaluator)
+ */
+function parseAgentMessages(messages: unknown[]): {
+  transcript: string;
+  extractedData: unknown;
+} {
+  if (!Array.isArray(messages)) return { transcript: "", extractedData: null };
 
-  await stagehand.init();
+  const summaryTexts: string[] = [];   // agent's written text — highest priority
+  const actionLines: string[] = [];    // tool confirmations — supporting context
+  const allExtracts: unknown[] = [];
 
-  const results: ExecutionResult[] = [];
-  let extractedData: Record<string, unknown> = {};
+  for (const msg of messages) {
+    if (typeof msg !== "object" || msg === null) continue;
+    const role: string = (msg as any).role ?? "";
+    const content: unknown = (msg as any).content;
+    const items: unknown[] = Array.isArray(content) ? content : [];
 
-  try {
-    for (const step of plan.steps) {
-      let result: ExecutionResult;
+    // ── assistant messages ────────────────────────────────────────────
+    if (role === "assistant") {
+      for (const item of items) {
+        if (typeof item !== "object" || item === null) continue;
+        const type: string = (item as any).type ?? "";
 
-      try {
-        switch (step.action) {
-          case "navigate": {
-            if (!step.value) {
-              throw new Error("Navigate requires URL in value field");
-            }
-            const page = stagehand.context.pages()[0];
-            if (!page) throw new Error("No page available");
-            await page.goto(step.value, { waitUntil: "networkidle" });
-            result = {
-              success: true,
-              message: `Navigated to ${step.value}`,
-              stepNumber: step.id,
-              action: "navigate",
-            };
-            break;
-          }
-
-          case "click": {
-            if (!step.value) {
-              throw new Error("Click requires selector or instruction");
-            }
-            await stagehand.act(step.value);
-            result = {
-              success: true,
-              message: `Clicked: ${step.value}`,
-              stepNumber: step.id,
-              action: "click",
-            };
-            break;
-          }
-
-          case "type": {
-            if (!step.value) {
-              throw new Error("Type requires value");
-            }
-            await stagehand.act(`Type: ${step.value}`);
-            result = {
-              success: true,
-              message: `Typed: ${step.value}`,
-              stepNumber: step.id,
-              action: "type",
-            };
-            break;
-          }
-
-          case "extract": {
-            if (!step.extractSchema) {
-              throw new Error("Extract requires extractSchema");
-            }
-
-            // Create Zod schema from description
-            const schemaObject: Record<string, z.ZodTypeAny> = {};
-            for (const [key, desc] of Object.entries(step.extractSchema)) {
-              schemaObject[key] = z.string().describe(desc);
-            }
-            const schema = z.object(schemaObject);
-
-            const extracted = await stagehand.extract(step.description, schema);
-            extractedData = { ...extractedData, ...extracted };
-
-            result = {
-              success: true,
-              data: extracted,
-              message: `Extracted data: ${JSON.stringify(extracted)}`,
-              stepNumber: step.id,
-              action: "extract",
-            };
-            break;
-          }
-
-          case "wait": {
-            const waitTime = parseInt(step.value || "1000", 10);
-            await new Promise((resolve) => setTimeout(resolve, waitTime));
-            result = {
-              success: true,
-              message: `Waited ${waitTime}ms`,
-              stepNumber: step.id,
-              action: "wait",
-            };
-            break;
-          }
-
-          case "observe": {
-            const actions = await stagehand.observe(
-              step.description || "Analyze the page"
-            );
-            result = {
-              success: true,
-              data: actions,
-              message: `Observed ${actions.length} possible actions`,
-              stepNumber: step.id,
-              action: "observe",
-            };
-            break;
-          }
-
-          case "scroll": {
-            const direction = step.value || "down";
-            await stagehand.act(`Scroll ${direction}`);
-            result = {
-              success: true,
-              message: `Scrolled ${direction}`,
-              stepNumber: step.id,
-              action: "scroll",
-            };
-            break;
-          }
-
-          default:
-            throw new Error(`Unknown action: ${step.action}`);
+        // {type:"text"} — this is the agent's written summary/answer
+        if (type === "text") {
+          const text = String((item as any).text ?? "").trim();
+          if (text) summaryTexts.push(text);
         }
-      } catch (error) {
-        result = {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-          message: `Step ${step.id} failed`,
-          stepNumber: step.id,
-          action: step.action,
-        };
-      }
 
-      results.push(result);
-
-      // Stop on critical errors
-      if (!result.success && step.action === "navigate") {
-        break;
+        // {type:"tool-call", toolName:"done"} — capture reasoning from input
+        if (type === "tool-call" && (item as any).toolName === "done") {
+          const reasoning = (item as any).input?.reasoning;
+          if (typeof reasoning === "string" && reasoning.trim()) {
+            summaryTexts.push(`[DONE REASON] ${reasoning.trim()}`);
+          }
+        }
       }
+      continue;
     }
 
-    return results;
-  } finally {
-    // Keep browser open for user inspection
-    // await stagehand.close();
+    // ── tool result messages ──────────────────────────────────────────
+    if (role === "tool") {
+      for (const item of items) {
+        if (typeof item !== "object" || item === null) continue;
+        const toolName: string = (item as any).toolName ?? (item as any).name ?? "tool";
+        const output: unknown = (item as any).output;
+
+        // Skip large DOM blobs — useless to evaluator
+        if (SKIP_TOOL_OUTPUT.has(toolName)) continue;
+
+        // extract — capture structured data
+        if (toolName === "extract") {
+          const structured = extractStructured(output);
+          if (structured != null) allExtracts.push(structured);
+          actionLines.push(`[EXTRACT] ${JSON.stringify(structured ?? output)}`);
+          continue;
+        }
+
+        // done tool result — just note success
+        if (toolName === "done") {
+          const val = getOutputValue(output);
+          const ok = (val as any)?.success ?? (val as any)?.taskComplete ?? true;
+          actionLines.push(`[DONE] taskComplete=${ok}`);
+          continue;
+        }
+
+        // navigate / goto / act / wait / scroll / click / type
+        // Pull only the minimal success+detail line — not the whole DOM
+        const val = getOutputValue(output);
+        if (val != null) {
+          const success = (val as any)?.success;
+          const url = (val as any)?.url;
+          const action = (val as any)?.action;
+          const waited = (val as any)?.waited;
+          const detail = url ?? action ?? waited ?? "";
+          const line = [
+            `success=${success ?? "?"}`,
+            detail ? String(detail) : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          actionLines.push(`[${toolName.toUpperCase()}] ${line}`);
+        }
+      }
+    }
+  }
+
+  const extractedData =
+    allExtracts.length === 1
+      ? allExtracts[0]
+      : allExtracts.length > 1
+        ? allExtracts
+        : null;
+
+  // Build compact transcript: summaries first (most signal), then action log
+  const parts: string[] = [];
+  if (summaryTexts.length > 0) {
+    parts.push("=== AGENT OUTPUT ===");
+    parts.push(summaryTexts.join("\n\n"));
+  }
+  if (actionLines.length > 0) {
+    parts.push("=== ACTION LOG ===");
+    parts.push(actionLines.join("\n"));
+  }
+
+  return { transcript: parts.join("\n"), extractedData };
+}
+
+function getOutputValue(output: unknown): unknown {
+  if (typeof output !== "object" || output === null) return output;
+  const o = output as Record<string, unknown>;
+  // { type: "json", value: {...} } or { type: "content", value: [...] }
+  if ("value" in o) {
+    const v = o.value;
+    // content arrays: [{type:"text", text:"..."}]
+    if (Array.isArray(v)) {
+      const texts = v
+        .filter((c: any) => c?.type === "text" && typeof c?.text === "string")
+        .map((c: any) => c.text)
+        .join(" ");
+      return texts || v;
+    }
+    return v;
+  }
+  return o;
+}
+
+/** Pull structured data out of an extract tool output */
+function extractStructured(output: unknown): unknown {
+  if (output == null) return null;
+  const val = getOutputValue(output);
+  if (typeof val !== "object" || val === null) return val;
+  const v = val as Record<string, unknown>;
+  if (v.success && v.result != null) {
+    const r = v.result as Record<string, unknown>;
+    return r.extraction ?? r;
+  }
+  if (v.extraction != null) return v.extraction;
+  if (v.result != null) return v.result;
+  return val;
+}
+
+/**
+ * Executes a browser task using Stagehand's agent() function.
+ * The agent autonomously navigates, clicks, types, and extracts data
+ * based on the plan's goal — no manual step-by-step execution.
+ */
+export async function executeBrowserPlan(
+  plan: BrowserPlan,
+  previousFeedback?: string
+): Promise<ExecutionResult[]> {
+  const stagehand = getStagehandClient();
+  await stagehand.init();
+
+  // Build the instruction from the plan goal + feedback context
+  const instruction = previousFeedback
+    ? `${plan.goal}\n\nPrevious attempt feedback to address: ${previousFeedback}`
+    : plan.goal;
+
+  const systemPrompt = `You are a browser automation agent.
+
+Rules:
+- Execute the task efficiently and completely.
+- Avoid unnecessary navigation.
+- Extract all requested structured data.
+- Stop only when the task is fully complete.
+
+Before calling done:
+1. Re-read the original user request.
+2. Verify every requested piece of information is collected.
+3. If anything is missing, continue browsing.
+4. Only call done when all requirements are satisfied.`;
+
+  try {
+    const agent = stagehand.agent({
+      mode: "dom",
+      systemPrompt,
+    });
+
+    const res = await agent.execute({
+      instruction,
+      maxSteps: 6,
+      highlightCursor: true,
+    });
+
+    const messages = res.messages ?? [];
+    const { transcript, extractedData } = parseAgentMessages(messages);
+    const completed = res.completed ?? false;
+
+    // Capture any top-level text stagehand puts on the response object
+    const topLevelText = [
+      (res as any).output,
+      (res as any).result,
+      (res as any).message,
+      (res as any).text,
+    ]
+      .filter((v) => typeof v === "string" && v.trim().length > 0)
+      .join("\n");
+
+    const agentOutput = transcript || topLevelText;
+
+    return [
+      {
+        success: completed,
+        message: completed
+          ? "Agent completed the task successfully"
+          : "Agent did not complete the task",
+        stepNumber: 1,
+        action: "agent",
+        agentOutput,
+        agentMessages: messages,
+        data:
+          extractedData ??
+          (topLevelText ? { output: topLevelText } : undefined),
+      },
+    ];
+  } catch (error) {
+    return [
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        message: "Agent execution failed",
+        stepNumber: 1,
+        action: "agent",
+      },
+    ];
   }
 }
 
