@@ -166,15 +166,17 @@ AI-powered task scheduler that runs autonomously in Supabase (serverless) - **no
 
 **Setup:**
 ```bash
-# 1. Deploy Edge Function once
+# 1. Create Supabase project at supabase.com, add URL + service_role key to .env
+
+# 2. Run scheduler/SETUP-READY.sql in Supabase SQL Editor (creates all tables + cron)
+
+# 3. Deploy Edge Function
 supabase login
 supabase link --project-ref YOUR_PROJECT_REF
 ./supabase/deploy.ps1
 
-# 2. Run setup SQL in Supabase SQL Editor
-# (opens scheduler/SETUP-READY.sql - copy/paste and run)
-
-# 3. Done! Scheduler runs every minute in Supabase
+# 4. Sync API keys to Supabase
+jimmy sync-credentials
 ```
 
 **Managing Tasks:**
@@ -416,38 +418,47 @@ No credentials needed — reuses your browser's existing cookies.
 
 ---
 
-## Scheduler Setup (One-Time)
+## Supabase Setup (One-Time, for new users)
 
-The scheduler runs **serverless in Supabase** via Edge Functions + pg_cron.
+The scheduler runs **serverless in Supabase** via Edge Functions + pg_cron. Follow these steps after cloning the project.
 
-**1. Install Supabase CLI:**
+**1. Create a Supabase project**
+- Go to [supabase.com](https://supabase.com) → New project
+- Note your **Project URL** and **service_role key** from Settings → API
+
+**2. Add credentials to `.env`**
+```env
+SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
+```
+
+**3. Create tables (run once in SQL Editor)**
+- Open Supabase Dashboard → SQL Editor
+- Open `scheduler/SETUP-READY.sql` from this project
+- Replace `YOUR_PROJECT_REF` and `YOUR_SERVICE_ROLE_KEY` at the bottom with your values
+  - Both are in Supabase Dashboard → Settings → API
+- Paste the entire file and click **RUN**
+
+This creates:
+- `scheduler_tasks` — your scheduled task definitions
+- `scheduler_runs` — execution history
+- `user_config` — API keys synced from your machine
+- `pg_cron` job that triggers every minute
+
+**4. Install Supabase CLI and deploy the Edge Function**
 ```bash
 npm i -g supabase
-```
-
-**2. Login and Link:**
-```bash
 supabase login
 supabase link --project-ref YOUR_PROJECT_REF
-```
-
-**3. Deploy:**
-```bash
 ./supabase/deploy.ps1
 ```
 
-This:
-- Deploys the `scheduler-tick` Edge Function
-- Sets `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` as secrets
-- Calls `jimmy sync-credentials` to push API keys to `user_config` table
+**5. Sync your API keys to Supabase**
+```bash
+jimmy sync-credentials
+```
 
-**4. Run Setup SQL:**
-- Open `scheduler/SETUP-READY.sql`
-- Copy entire contents
-- Paste into Supabase SQL Editor
-- Click RUN
-
-**Done!** Scheduler runs every minute. Your machine can be off.
+**Done!** Scheduler runs every minute in Supabase. Your machine can be off.
 
 **Monitor:**
 ```bash
@@ -455,7 +466,7 @@ jimmy scheduler-debug                      # CLI debug tool
 supabase functions logs scheduler-tick     # Edge Function logs
 ```
 
-**Re-sync credentials after changes:**
+**Re-sync credentials after re-auth:**
 ```bash
 jimmy sync-credentials
 ```
