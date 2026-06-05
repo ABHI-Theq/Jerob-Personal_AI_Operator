@@ -1,103 +1,38 @@
-# Jimmy — Personal AI Assistant CLI
+# Jerob — Personal AI Assistant CLI
 
-A terminal-first AI agent framework with autonomous task execution, browser automation, email operations, and serverless scheduled workflows.
+A terminal-first personal AI agent framework. Jerob runs in your terminal and gives you five distinct modes: autonomous file/code agent, structured planning, browser automation, conversational Q&A, and a serverless task scheduler that runs 24/7 in Supabase even when your machine is off.
 
 ---
 
-## Table of Contents
+## What Jerob Can Do
 
-- [Quick Start](#quick-start)
-- [Full Setup Guide](#full-setup-guide)
-- [CLI Commands](#cli-commands)
-- [Modes](#modes)
-  - [Agent Mode](#-agent-mode)
-  - [Plan Mode](#-plan-mode)
-  - [Browser Agent Mode](#-browser-agent-mode)
-  - [Ask Mode](#-ask-mode)
-  - [Scheduler Mode](#-scheduler-mode)
-- [Email Operations](#-email-operations)
-- [Supabase Setup](#supabase-setup-scheduler--serverless)
-- [Environment Variables](#environment-variables)
-- [Models](#models)
-- [Project Structure](#project-structure)
-- [Dependencies](#dependencies)
+| Mode | What it does |
+|------|-------------|
+| 🤖 Agent | Autonomous file and code operations with approval flow |
+| 🧭 Plan | AI-generated multi-step plan for any goal, with optional execution |
+| 🌐 Browser Agent | Autonomous browser automation with iterative refinement |
+| ❓ Ask | Conversational Q&A with workspace access, web search, and email |
+| ⏰ Scheduler | Serverless recurring tasks (search + email + crawl) running in Supabase |
 
 ---
 
 ## Quick Start
 
 ```bash
-# Prerequisites: Bun runtime (https://bun.sh)
-bun install
+# 1. Install Bun (https://bun.sh)
+powershell -c "irm bun.sh/install.ps1 | iex"   # Windows
+curl -fsSL https://bun.sh/install | bash         # macOS/Linux
 
-# First run — prompts for username, password, and OpenRouter API key
-jimmy jet
-```
-
----
-
-## Full Setup Guide
-
-### 1. Install Bun
-
-```bash
-# Windows (PowerShell)
-powershell -c "irm bun.sh/install.ps1 | iex"
-
-# macOS / Linux
-curl -fsSL https://bun.sh/install | bash
-```
-
-### 2. Clone and install dependencies
-
-```bash
+# 2. Clone and install
 git clone <repo-url>
-cd jimmy
+cd jerob
 bun install
+
+# 3. First run — interactive setup wizard handles everything
+jerob jet
 ```
 
-### 3. Create your `.env` file
-
-Copy the template below into a `.env` file at the project root. Fill in the keys you need — only `OPENROUTER_KEY` is required to start.
-
-```env
-# ── REQUIRED ─────────────────────────────────────────────────────
-OPENROUTER_KEY=sk-or-v1-...
-OPENROUTER_MODEL=openrouter/free        # or any model slug
-
-# ── REQUIRED for Browser Agent and Scheduler ─────────────────────
-GROQ_API_KEY=gsk_...
-GOOGLE_GENERATIVE_AI_API_KEY=...        # Google AI Studio key
-
-# ── REQUIRED for Scheduler (Supabase) ────────────────────────────
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
-
-# ── OPTIONAL — Web search and scraping ───────────────────────────
-FIRECRAWL_KEY=fc-...
-
-# ── OPTIONAL — Gmail integration ─────────────────────────────────
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-PORT=8787                               # OAuth callback port (default 8787)
-
-# ── OPTIONAL — Telegram bot ──────────────────────────────────────
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_OWNER_ID=...                   # Your Telegram chat ID
-
-# ── OPTIONAL — Browserbase (cloud browser alternative) ───────────
-BROWSERBASE_API_KEY=...
-```
-
-### 4. First run
-
-```bash
-jimmy jet
-```
-
-On first launch, Jimmy prompts you to create a username and password, then your OpenRouter and Gemini API keys. These are AES-encrypted and stored in `~/.cccontrol/config.json` — never in plaintext.
-
-After that, `jimmy jet` goes straight to the mode selector every time.
+No `.env` file needed. The setup wizard collects your API keys, encrypts them, and writes `.env` automatically.
 
 ---
 
@@ -105,11 +40,12 @@ After that, `jimmy jet` goes straight to the mode selector every time.
 
 | Command | Description |
 |---------|-------------|
-| `jimmy jet` | Launch Jimmy (main mode selector) |
-| `jimmy set-key` | Update your stored OpenRouter or Gemini API key |
-| `jimmy reset-auth` | Wipe stored credentials and start fresh |
-| `jimmy sync-credentials` | Push local API keys to Supabase `user_config` table |
-| `jimmy scheduler-debug` | Debug scheduler status and test the Edge Function |
+| `jerob jet` | Launch Jerob (main entry point) |
+| `jerob set-key` | Update any stored API key |
+| `jerob switch-model` | Switch the active model for any provider |
+| `jerob reset-auth` | Wipe all stored credentials and start fresh |
+| `jerob sync-credentials` | Push API keys to Supabase for the scheduler |
+| `jerob scheduler-debug` | Diagnose scheduler issues |
 
 ---
 
@@ -117,360 +53,282 @@ After that, `jimmy jet` goes straight to the mode selector every time.
 
 ### 🤖 Agent Mode
 
-Full agentic loop with filesystem access. Give it any goal in plain English; Jimmy plans and executes file operations with a diff-based approval flow before writing anything.
+Give Jerob any coding or filesystem goal in plain English. It autonomously plans, uses tools, and stages all changes — nothing touches disk until you approve.
 
-**How it works:**
-1. You describe a goal
-2. The agent calls file/shell tools autonomously (up to 30 steps)
-3. All changes are staged — nothing is written yet
-4. You review a diff and approve or reject
-5. If a new project folder was scaffolded, Jimmy offers to run a follow-up coding pass inside it
+**Flow:**
+1. Describe a goal
+2. Agent calls tools (up to 30 steps): read, create, modify, delete files, run shell commands
+3. All mutations are staged in memory
+4. You see a diff and choose: approve, reject, or view
+5. On approval everything is written at once
+6. If scaffolding created a new project folder, you're offered a follow-up coding pass inside it
 
-**Available tools:**
-- `read_file` / `list_files` / `search_files` — read-only workspace access
-- `create_file` / `modify_file` / `delete_file` — staged mutations
-- `create_folder` — directory creation
-- `execute_shell` — run shell commands (scaffolding, installs, etc.)
-- `grep_search` / `file_search` — codebase search
+**Tools available to the agent:**
+- `read_file`, `list_files`, `search_files`, `analyze_codebase` — workspace reads
+- `create_file`, `modify_file`, `delete_file`, `create_folder` — staged mutations
+- `execute_shell` — run commands (bun, npx, git, etc.)
+- `grep_search`, `file_search` — codebase search
 
-**Example goals:**
+**Example prompts:**
 ```
-Build a REST API with Express and TypeScript
-Refactor all my components to use React hooks
-Add input validation to every form in this project
-Create a new Next.js app with Tailwind and set up routing
+Build a REST API in TypeScript with Express and Zod validation
+Refactor all class components in /src to use React hooks
+Create a new Next.js app with Tailwind CSS in a folder called landing
+Add error boundaries to every route in this project
 ```
 
-**Required env:** `OPENROUTER_KEY`
+**Required:** At least one LLM provider configured (OpenRouter, Gemini, Claude, OpenAI, or Groq)
 
 ---
 
 ### 🧭 Plan Mode
 
-Generates a structured multi-step plan for your goal. Optionally scans your workspace for context before planning. You can toggle individual steps on/off, save the plan as a `.md` file, then optionally hand off selected steps to Agent Mode for execution.
+Generates a structured multi-step plan before touching any code. Good for large features where you want to review the approach first.
 
-**How it works:**
-1. Enter your goal
-2. Choose whether to include a workspace scan
-3. Jimmy generates a step-by-step plan with titles and descriptions
-4. Toggle which steps you want to execute
+**Flow:**
+1. Describe your goal
+2. Choose whether to scan your workspace for context
+3. Jerob generates a plan: numbered steps with titles, descriptions, and complexity hints
+4. Toggle individual steps on/off
 5. Optionally save to a `.md` file
-6. Optionally execute selected steps through the agent
+6. Optionally hand off selected steps to Agent Mode for execution
 
-**Good for:**
-- Breaking down large features before coding
-- Getting a roadmap before committing to a direction
-- Reviewing AI's interpretation of your goal before execution
+**When to use it:**
+- You want to understand what the AI will do before it does it
+- Planning a large feature across multiple files
+- Generating a project roadmap
 
-**Required env:** `OPENROUTER_KEY`
+**Required:** At least one LLM provider
 
 ---
 
 ### 🌐 Browser Agent Mode
 
-Autonomous browser automation using Stagehand. Runs an iterative Plan → Execute → Evaluate loop, refining until it hits a quality threshold (score ≥ 80/100) or exhausts 5 iterations.
+Autonomous browser automation using Stagehand (Playwright under the hood). Runs a Plan → Execute → Evaluate loop up to 5 times, refining its approach based on what it observes.
 
-**How it works:**
-1. You enter a query (what to do in the browser)
-2. **Planner** — LLM generates a browser automation plan
-3. **Executor** — Stagehand's `agent()` runs the goal in DOM mode
-4. **Evaluator** — LLM scores the result 0–100 for completeness and accuracy
-5. If score < 80, it feeds back issues and retries with a refined plan
-6. Stops when satisfied or after 5 iterations, returns the best result
+**Flow:**
+1. Enter what you want the browser to do
+2. Planner generates a step-by-step browser plan
+3. Executor runs Stagehand's `agent()` in DOM mode — navigates, clicks, types, extracts
+4. Evaluator scores the result 0–100 for completeness and accuracy
+5. If score < 80, the feedback is fed back and the loop retries
+6. Stops when satisfied (≥80) or after 5 iterations, returns best result
+7. Optional: save results as JSON or Markdown report, send via email
 
-**Output:** Console summary + optional JSON and Markdown report saved to disk
+**Uses your existing browser session** — point it at your Brave/Chrome profile and it reuses cookies (LinkedIn, Twitter, Gmail, etc. — no re-login needed).
 
-**Browser setup (for authenticated sites):**
-
-To access sites you're already logged into (LinkedIn, Twitter, etc.), point Stagehand at your Brave browser profile:
-
+**Browser setup** (`plan/browser-agent/executor.ts`):
 ```ts
-// plan/browser-agent/executor.ts
-localBrowserLaunchOptions: {
-  executablePath: "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-  args: [
-    '--user-data-dir=C:\\Users\\YOUR_USERNAME\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data',
-    '--profile-directory=Default',
-  ],
-  headless: false,
-}
+executablePath: "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+args: [
+  '--user-data-dir=C:\\Users\\YOUR_USERNAME\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data',
+  '--profile-directory=Default',
+]
 ```
 
 **Example queries:**
 ```
-Find top 5 AI jobs on LinkedIn with full job descriptions
-Get the transcript of this YouTube video: https://...
-Extract all product names and prices from this page
-Search flights NYC to LA under $300 for next Friday
+Find the top 5 AI engineering jobs on LinkedIn and extract full descriptions
+Get the transcript of this YouTube video: https://youtube.com/watch?v=...
+Compare iPhone 15 prices across Amazon, Flipkart, and Croma
+Fill out the contact form on https://example.com with my details
 ```
 
-**Required env:** `GOOGLE_GENERATIVE_AI_API_KEY`
-
-**Configuration** (in `plan/browser-agent/orchestrator.ts`):
-```ts
-maxIterations: 5        // max retries
-timeout: 120000         // 2 min per execution
-evaluationThreshold: 80 // score out of 100 to accept
-```
+**Required:** `GOOGLE_GENERATIVE_AI_API_KEY` (Stagehand uses Gemini for DOM understanding)
 
 ---
 
 ### ❓ Ask Mode
 
-Conversational Q&A with workspace access, web search, and email integration. Read-only by default — it cannot modify files. Multi-turn with session history. At the end you can email the answer or save the session as a `.md` summary.
+Conversational AI with access to your workspace, the web, and your Gmail. Read-only — cannot modify files. Maintains session history for follow-up questions.
 
-**Available tools:**
-- `read_file` / `list_files` / `search_files` / `analyze_codebase` — read your workspace
-- `web_search` / `web_scrape` — search or scrape via Firecrawl
-- All 16 email operations (see Email Operations section)
+**Tools available:**
+- `read_file`, `list_files`, `search_files`, `analyze_codebase` — read your project
+- `web_search`, `web_scrape` — search or scrape via Firecrawl
+- All 16 Gmail operations (search, summarize, send, classify, digest, etc.)
 
 **Flow:**
-1. Ask any question — about your code, the web, or anything
-2. Jimmy answers using tools as needed (file reads, web searches, email lookups)
-3. After each answer: ask another, send the answer to your email, or save a summary
-4. Session summary is generated by LLM and saved to a `.md` file on exit
+1. Ask anything
+2. Jerob answers using whatever tools it needs
+3. After each answer: continue, send answer to email, or save session summary
+4. Session summary is LLM-generated and saved to a `.md` file
 
-**Required env:** `OPENROUTER_KEY`
-**Optional:** `FIRECRAWL_KEY` (for web search/scrape), Gmail credentials (for email tools)
+**Example questions:**
+```
+What does the auth system in this project do?
+Search for recent papers on RAG and summarize the top 3
+What unread emails do I have from last week?
+Explain the scheduler architecture to me
+```
+
+**Required:** At least one LLM provider
+**Optional:** `FIRECRAWL_KEY` for web tools, Gmail credentials for email tools
 
 ---
 
 ### ⏰ Scheduler Mode
 
-AI-powered task scheduler that runs entirely serverless in Supabase. You create tasks in plain English; Jimmy plans them into steps with a cron schedule. They execute in Supabase Edge Functions every minute — your machine can be completely off.
+Serverless recurring task scheduler. Tasks run in Supabase Edge Functions via `pg_cron` — your machine can be completely off. Describe tasks in plain English; Jerob's AI plans the steps and cron schedule automatically.
 
 **How it works:**
-1. Describe a repetitive task (e.g. "Every morning search top AI news and email me")
-2. Jimmy uses AI to break it into steps (`web_search`, `web_crawl`, `email_send`, `custom`) and pick a cron schedule
-3. Task is saved to Supabase `scheduler_tasks` table
-4. `pg_cron` triggers the `scheduler-tick` Edge Function every minute
-5. The Edge Function runs all due tasks, writes results to `scheduler_runs`
+1. Describe a recurring task (e.g. "Every morning search top AI news and email me a summary")
+2. AI breaks it into typed steps and suggests a cron schedule
+3. Task saved to Supabase `scheduler_tasks` table
+4. `pg_cron` calls the `scheduler-tick` Edge Function every minute
+5. Edge Function picks up due tasks, executes them, writes results to `scheduler_runs`
+6. Optional summary email sent after each run
 
 **Step types:**
-| Type | What it does |
-|------|-------------|
-| `web_search` | Searches via Firecrawl, summarizes results with LLM |
-| `web_crawl` | Scrapes a URL via Firecrawl, extracts relevant info |
-| `custom` | Any LLM-driven task |
-| `email_send` | Sends email via Gmail API using OAuth refresh token |
+| Type | What the Edge Function does |
+|------|----------------------------|
+| `web_search` | Firecrawl search → LLM summary |
+| `web_crawl` | Firecrawl scrape URL → LLM extraction |
+| `custom` | Pure LLM task with accumulated context |
+| `email_send` | Gmail API send using OAuth refresh token |
 
-**Managing tasks (inside Jimmy → Scheduler):**
-- List all tasks with status, next run time, run count
-- Add new task — AI plans it for you
-- Edit cron schedule (accepts plain time like `9:00am` or full cron)
-- Toggle enable/disable
-- View run history with output and errors
-- Run now (manual trigger via Edge Function)
-- Delete task
+**LLM priority in Edge Function:** Gemini → OpenRouter → Groq (uses whichever key is in `user_config`)
 
-**Credentials auto-sync:** When you re-authenticate Gmail, the refresh token automatically syncs to Supabase `user_config`. The Edge Function picks it up on the next run — no manual `supabase secrets set` needed.
+**Managing tasks:**
+- Add, list, enable/disable, edit schedule, view run history, trigger manually, delete
+- Schedule input: type `8:30pm` (auto-converted to UTC cron) or full cron like `0 9 * * 1`
 
-**Required env:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, `OPENROUTER_KEY`
-**Optional:** `FIRECRAWL_KEY` (for web steps), Gmail credentials (for email steps)
+**All times are stored in UTC.** Jerob automatically converts your local time to UTC when you enter a schedule. India (IST = UTC+5:30): `8:30pm` → `15:00 UTC`.
 
-See [Supabase Setup](#supabase-setup-scheduler--serverless) for deployment instructions.
+**Required for scheduler:** Supabase project with `pg_net` + `pg_cron` extensions enabled, Edge Function deployed
 
 ---
 
-## 📧 Email Operations
+## 📧 Email Operations (16 Functions)
 
-16 Gmail functions available from Ask Mode and Scheduler Mode. First use triggers an OAuth browser flow — after that, the refresh token is stored locally and auto-synced to Supabase.
+Available from Ask Mode and Scheduler Mode. First use triggers a Gmail OAuth flow in your browser.
 
 | Function | Description |
 |----------|-------------|
-| `email_send` | Send with optional CC/BCC |
-| `email_read` | Read a specific email by ID |
-| `email_search` | Search with Gmail query syntax (`is:unread`, `from:x`, etc.) |
-| `email_summarize` | AI-generated 2-3 sentence summary |
-| `email_reply` | Reply while preserving thread |
-| `email_draft` | Save as draft without sending |
+| `email_send` | Send email with CC/BCC support |
+| `email_read` | Read a message by ID |
+| `email_search` | Gmail query syntax search |
+| `email_summarize` | AI 2-3 sentence summary |
+| `email_reply` | Reply keeping thread intact |
+| `email_draft` | Save draft without sending |
 | `email_delete` | Permanently delete |
-| `email_archive` | Move to archive (removes INBOX label) |
-| `email_label` | Add or remove labels |
-| `email_classify` | Auto-categorize: work / personal / newsletter / spam / etc. |
-| `email_extract_tasks` | Extract action items with LLM |
-| `email_bulk_action` | Batch delete / archive / label / mark read |
-| `email_digest` | LLM digest of recent or filtered emails |
-| `email_schedule_send` | Save draft + return scheduled time |
-| `email_send_draft` | Send a previously saved draft by ID |
+| `email_archive` | Remove from inbox |
+| `email_label` | Add/remove labels |
+| `email_classify` | Auto-categorize (work/personal/newsletter/spam/etc.) |
+| `email_extract_tasks` | Pull action items with AI |
+| `email_bulk_action` | Batch delete/archive/label/read |
+| `email_digest` | AI digest of recent/filtered emails |
+| `email_schedule_send` | Save draft + note scheduled time |
+| `email_send_draft` | Send a saved draft by ID |
 | `email_thread` | Get all messages in a thread |
 
-**Gmail auth setup:**
+---
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com) → Create a project
-2. Enable Gmail API
-3. Create OAuth 2.0 credentials (Desktop app) → copy Client ID and Secret to `.env`
-4. Set `PORT=8787` in `.env`
-5. On first email use, Jimmy opens a browser for Google login
-6. Credentials stored in `~/.cccontrol/googleAuth/` with `600` permissions
+## AI Providers & Models
+
+Jerob supports 5 providers. You choose which ones to use during setup, and in what priority order.
+
+| Provider | Used for | Default model |
+|----------|----------|---------------|
+| OpenRouter (free) | Agent, Plan, Ask | `openrouter/free` |
+| OpenRouter (paid) | Agent, Plan, Ask | `anthropic/claude-3.5-sonnet` |
+| Google Gemini | Browser Agent (required), Agent fallback | `gemini-2.0-flash` |
+| Anthropic Claude | Agent, Plan, Ask fallback | `claude-3-5-sonnet-20241022` |
+| OpenAI | Agent, Plan, Ask fallback | `gpt-4o-mini` |
+| Groq | Scheduler planner, fast fallback | `llama-3.3-70b-versatile` |
+
+**Priority logic:**
+- `getAgentModel()` — tries OpenRouter first (paid or free based on your tier), then preferred providers in your chosen order
+- `getAgentModel2()` — skips OpenRouter (avoids content refusals on structured output), tries preferred providers → Groq
+- Edge Function (scheduler) — tries Gemini → OpenRouter → Groq
+
+Switch models anytime: `jerob switch-model`
 
 ---
 
-## Supabase Setup (Scheduler + Serverless)
+## Security
 
-### Step 1 — Create a Supabase project
-
-Go to [supabase.com](https://supabase.com) → New project. From Settings → API, copy:
-- **Project URL** → `SUPABASE_URL` in `.env`
-- **service_role secret** → `SUPABASE_SERVICE_ROLE_KEY` in `.env`
-
-### Step 2 — Create all tables (run once)
-
-1. Open Supabase Dashboard → SQL Editor
-2. Open `scheduler/SETUP-READY.sql` from this project
-3. At the bottom of the file, replace:
-   - `YOUR_PROJECT_REF` with your project reference ID (from the URL: `https://YOUR_PROJECT_REF.supabase.co`)
-   - `YOUR_SERVICE_ROLE_KEY` with your service_role key
-4. Paste the entire file into SQL Editor and click **RUN**
-
-This creates:
-- `scheduler_tasks` — task definitions
-- `scheduler_runs` — execution history
-- `user_config` — API keys synced from your machine
-- RLS policies (service role only)
-- `pg_cron` job that triggers the Edge Function every minute
-
-### Step 3 — Install Supabase CLI and link project
-
-```bash
-npm i -g supabase
-supabase login
-supabase link --project-ref YOUR_PROJECT_REF
-```
-
-### Step 4 — Deploy the Edge Function
-
-```powershell
-.\supabase\deploy.ps1
-```
-
-This deploys `scheduler-tick`, sets `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` as Edge Function secrets, then runs `jimmy sync-credentials` to push all your API keys to `user_config`.
-
-### Step 5 — Verify
-
-```bash
-jimmy scheduler-debug
-```
-
-Should show the pg_cron job active and Edge Function reachable.
-
-### Re-sync after key changes
-
-```bash
-jimmy sync-credentials
-```
-
----
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENROUTER_KEY` | Yes | OpenRouter API key |
-| `OPENROUTER_MODEL` | No | Model slug (default: `openrouter/free`) |
-| `GROQ_API_KEY` | For Scheduler/Browser | Groq API key |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | For Browser Agent | Google AI Studio key |
-| `SUPABASE_URL` | For Scheduler | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | For Scheduler | Supabase service role key |
-| `FIRECRAWL_KEY` | Optional | Firecrawl key for web search/scrape |
-| `GOOGLE_CLIENT_ID` | For Gmail | OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | For Gmail | OAuth client secret |
-| `PORT` | For Gmail | OAuth callback port (default: 8787) |
-| `TELEGRAM_BOT_TOKEN` | For Telegram | Bot token from @BotFather |
-| `TELEGRAM_OWNER_ID` | For Telegram | Your Telegram chat ID |
-| `BROWSERBASE_API_KEY` | Optional | Cloud browser alternative |
-
----
-
-## Models
-
-| Model | Used for |
-|-------|----------|
-| OpenRouter (configurable) | Agent, Plan, Ask, email AI functions |
-| Groq `llama-3.3-70b-versatile` | Scheduler planner + Browser Agent planner/evaluator |
-| `google/gemini-3.1-flash-lite-preview` | Stagehand browser execution |
-| OpenRouter (fallback) | Browser Agent + Scheduler fallback if primary fails |
-
-Set your preferred model in `.env`:
-```env
-OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
-# or
-OPENROUTER_MODEL=openai/gpt-4o
-```
+- All API keys are AES-256 encrypted with your password before being stored in `~/.cccontrol/config.json`
+- Your password is stored as a bcrypt hash — never plaintext
+- `.env` is auto-generated from encrypted config on each login — never needs to be committed
+- Gmail refresh token stored in `~/.cccontrol/googleAuth/` with `600` permissions
+- Supabase `user_config` table stores API keys for the Edge Function — protected by RLS (service role only)
+- `.gitignore` excludes `.env`, `~/.cccontrol/`, and all credential files
 
 ---
 
 ## Project Structure
 
 ```
-jimmy/
-├── index.ts                  # CLI entry (commander)
-├── CLI/cli.ts                # Mode selector loop
+jerob/
+├── index.ts                   # CLI entry point (commander)
+├── CLI/cli.ts                 # Mode selector loop
 │
-├── agent/                    # Agent Mode
-│   ├── orchestrator.ts       # Agent loop + approval flow
-│   ├── agent-tools.ts        # File/folder/shell tools
-│   ├── tool-executor.ts      # Executes staged actions
-│   ├── action-tracker.ts     # Tracks pending mutations
-│   ├── approval.ts           # CLI approval prompt
-│   ├── diff-view.ts          # Diff renderer
+├── agent/                     # Agent Mode
+│   ├── orchestrator.ts        # Main agent loop + approval flow
+│   ├── agent-tools.ts         # File/shell tool definitions
+│   ├── tool-executor.ts       # Applies staged mutations
+│   ├── action-tracker.ts      # Tracks pending changes
+│   ├── approval.ts            # Approve/reject prompt
+│   ├── diff-view.ts           # Diff renderer
 │   └── types.ts
 │
 ├── ask/
-│   └── orchestrator.ts       # Ask loop with web + file + email tools
+│   └── orchestrator.ts        # Ask mode loop
 │
 ├── plan/
-│   ├── orchestrator.ts       # Plan mode loop
-│   ├── planner.ts            # LLM plan generation
-│   ├── selection.ts          # Step toggle UI
-│   ├── web-tools.ts          # Firecrawl tools
-│   ├── browser-tool.ts       # Standalone Stagehand runner
+│   ├── orchestrator.ts        # Plan mode loop
+│   ├── planner.ts             # LLM plan generation
+│   ├── selection.ts           # Step toggle UI
+│   ├── web-tools.ts           # Firecrawl integration
 │   ├── types.ts
-│   └── browser-agent/        # Browser Agent Mode
-│       ├── orchestrator.ts   # Iteration loop
-│       ├── planner.ts        # Browser plan generation
-│       ├── executor.ts       # Stagehand execution
-│       ├── evaluator.ts      # LLM scoring + feedback
+│   └── browser-agent/         # Browser Agent Mode
+│       ├── orchestrator.ts    # Iteration loop
+│       ├── planner.ts         # Browser plan generation
+│       ├── executor.ts        # Stagehand execution
+│       ├── evaluator.ts       # LLM scoring + feedback
 │       └── types.ts
 │
 ├── email_ops/
-│   ├── email_functions.ts    # 16 Gmail functions
-│   ├── email-tools.ts        # AI SDK tool wrappers
-│   ├── email_init.ts         # OAuth flow
-│   ├── email_server.ts       # Express OAuth server
-│   ├── email_pass_store.ts   # Credential storage
+│   ├── email_functions.ts     # 16 Gmail functions
+│   ├── email-tools.ts         # AI SDK tool wrappers
+│   ├── email_init.ts          # OAuth browser flow
+│   ├── email_server.ts        # Express OAuth callback server
+│   ├── email_pass_store.ts    # Refresh token storage
 │   └── types.ts
 │
 ├── scheduler/
-│   ├── orchestrator.ts       # CLI interface
-│   ├── planner.ts            # AI task planning
-│   ├── db.ts                 # Supabase client + helpers
-│   ├── config-sync.ts        # Auto credential sync
-│   ├── debug.ts              # jimmy scheduler-debug tool
-│   ├── update-task-email.ts  # Update email on existing tasks
-│   ├── SETUP-READY.sql       # Run once in Supabase SQL Editor
-│   ├── check-status.sql      # Diagnostic queries
-│   ├── ARCHITECTURE.md       # System design
-│   └── README.md
+│   ├── orchestrator.ts        # Scheduler CLI interface
+│   ├── planner.ts             # AI task step planning
+│   ├── db.ts                  # Supabase client + query helpers
+│   ├── config-sync.ts         # Push keys to user_config table
+│   ├── debug.ts               # jerob scheduler-debug tool
+│   ├── update-task-email.ts   # CLI utility to fix task emails
+│   ├── SETUP-READY.sql        # Run once in Supabase SQL Editor
+│   └── check-status.sql       # Diagnostic SQL queries
 │
 ├── supabase/
 │   ├── functions/
-│   │   └── scheduler-tick/   # Edge Function (Deno)
-│   │       └── index.ts
-│   └── deploy.ps1            # Deploy + secrets + sync
+│   │   └── scheduler-tick/    # Deno Edge Function
+│   │       └── index.ts       # Task executor (Gemini→OpenRouter→Groq)
+│   └── deploy.ps1             # Deploy script
 │
 ├── auth/
-│   ├── auth.ts               # Login / setup / update flows
-│   ├── config-store.ts       # Persist config to ~/.cccontrol
-│   └── crypto.ts             # AES encrypt + password hash
+│   ├── auth.ts                # Login, setup, key update, model switch
+│   ├── config-store.ts        # Read/write ~/.cccontrol/config.json
+│   ├── crypto.ts              # AES encrypt/decrypt + password hash
+│   └── env-writer.ts          # Auto-write .env from decrypted config
 │
 ├── config/
-│   └── ai.config.ts          # Model providers
+│   └── ai.config.ts           # Provider builders + model selection logic
+│
+├── utils/
+│   ├── llm-error.ts           # LLM error classification + retry logic
+│   └── model-validator.ts     # Model ID validation per provider
 │
 └── tui/
-    ├── spinner.ts
-    ├── spinup.ts             # Mode selector UI
-    └── terminal-render.ts    # Markdown renderer
+    ├── spinner.ts             # withSpinner helper
+    ├── spinup.ts              # Top-level mode selector UI
+    └── terminal-render.ts     # Markdown → terminal renderer
 ```
 
 ---
@@ -479,40 +337,35 @@ jimmy/
 
 | Package | Purpose |
 |---------|---------|
-| `@browserbasehq/stagehand` | Browser automation |
-| `ai` + `@openrouter/ai-sdk-provider` | LLM calls via AI SDK |
-| `@ai-sdk/groq` | Groq model provider |
+| `@browserbasehq/stagehand` | Browser automation (Playwright + AI) |
+| `ai` | Vercel AI SDK core |
+| `@openrouter/ai-sdk-provider` | OpenRouter provider |
+| `@ai-sdk/groq` | Groq provider |
+| `@ai-sdk/google` | Google Gemini provider |
+| `@ai-sdk/anthropic` | Anthropic Claude provider |
+| `@ai-sdk/openai` | OpenAI provider |
 | `@supabase/supabase-js` | Supabase client |
-| `telegraf` | Telegram bot |
-| `@clack/prompts` | Interactive CLI prompts |
-| `@mendable/firecrawl-js` | Web scraping / search |
+| `telegraf` | Telegram bot framework |
+| `@clack/prompts` | Beautiful interactive CLI prompts |
+| `@mendable/firecrawl-js` | Web scraping and search |
 | `googleapis` | Gmail API |
 | `commander` | CLI command parsing |
 | `chalk` | Terminal colors |
 | `zod` | Schema validation |
-| `marked` + `marked-terminal` | Markdown rendering |
-| `express` | OAuth callback server for Gmail |
-| `diff` | Diff generation |
-| `dotenv` | Env var loading |
+| `marked` + `marked-terminal` | Markdown → terminal rendering |
+| `express` | OAuth callback server |
+| `diff` | Diff generation for approval flow |
+| `dotenv` | `.env` loading |
+| `figlet` | ASCII art banner |
 | `open` | Open browser for OAuth |
-
----
-
-## Security
-
-- API keys are AES-encrypted with your password before storage
-- Password is stored as a hash only — never plaintext
-- Gmail refresh token stored in `~/.cccontrol/googleAuth/` with `600` permissions
-- Supabase credentials auto-sync to `user_config` (not in git)
-- All credential files excluded from version control via `.gitignore`
 
 ---
 
 ## Runtime
 
-Requires [Bun](https://bun.sh).
+Requires [Bun](https://bun.sh) — Node.js works but Bun is significantly faster for this project.
 
 ```bash
 bun install
-jimmy jet
+jerob jet
 ```
