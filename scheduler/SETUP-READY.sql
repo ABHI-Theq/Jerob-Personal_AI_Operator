@@ -36,7 +36,7 @@ SELECT cron.schedule(
     url     := 'https://zbgjrdlggpifbdbblbxa.supabase.co/functions/v1/scheduler-tick',
     headers := jsonb_build_object(
       'Content-Type',   'application/json',
-      'Authorization',  'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpiZ2pyZGxnZ3BpZmJkYmJsYnhhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDU5MjI0MywiZXhwIjoyMDk2MTY4MjQzfQ.hL4_0oarUBHpHeEQOsNt_Z_7Fa7a11oRouizB9AeKrM'
+      'Authorization',  'Bearer <SUPABASE_URL>'
     ),
     body    := '{}'::jsonb
   );
