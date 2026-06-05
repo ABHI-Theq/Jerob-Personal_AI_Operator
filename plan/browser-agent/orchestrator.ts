@@ -14,6 +14,7 @@ import type {
   IterationResult,
   BrowserAgentConfig,
 } from "./types";
+import { printLLMError } from "../../utils/llm-error";
 
 const DEFAULT_CONFIG: BrowserAgentConfig = {
   maxIterations: 5,
@@ -67,10 +68,8 @@ export async function runBrowserAgentMode(): Promise<void> {
           () => generateBrowserPlan(query, previousFeedback)
         );
       } catch (error) {
-        console.log(
-          chalk.red(`Plan failed: ${error instanceof Error ? error.message : String(error)}`)
-        );
-        throw error;
+        printLLMError(error, "Browser planner");
+        break;
       }
 
       maybeLog(chalk.dim(`Goal: ${plan.goal}`));
@@ -84,10 +83,8 @@ export async function runBrowserAgentMode(): Promise<void> {
           () => executeBrowserPlan(plan, previousFeedback)
         );
       } catch (error) {
-        console.log(
-          chalk.red(`Execution failed: ${error instanceof Error ? error.message : String(error)}`)
-        );
-        throw error;
+        console.log(chalk.red(`✖ Browser execution failed: ${error instanceof Error ? error.message : String(error)}`));
+        break;
       }
 
       // Collect extracted data from agent
@@ -115,10 +112,8 @@ export async function runBrowserAgentMode(): Promise<void> {
           () => evaluateExecutionResults(query, plan, execution, config.evaluationThreshold)
         );
       } catch (error) {
-        console.log(
-          chalk.red(`Evaluation failed: ${error instanceof Error ? error.message : String(error)}`)
-        );
-        throw error;
+        printLLMError(error, "Evaluator");
+        break;
       }
 
       maybeLog(chalk.cyan(`Score: ${evaluation.score}/100 | Completeness: ${evaluation.completeness}% | Accuracy: ${evaluation.accuracy}%`));
@@ -261,8 +256,7 @@ export async function runBrowserAgentMode(): Promise<void> {
       }
     }
   } catch (error) {
-    console.log(chalk.red("\n❌ Browser Agent Error:"));
-    console.log(chalk.red(error instanceof Error ? error.message : String(error)));
+    printLLMError(error, "Browser Agent");
   } finally {
     try {
       await closeStagehand();

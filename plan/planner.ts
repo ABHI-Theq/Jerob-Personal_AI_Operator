@@ -14,6 +14,7 @@ import { defaultAgentConfig } from '../agent/types.ts';
 import { createWebTools } from './web-tools.ts';
 import type { Plan, PlanStep } from './index.ts';
 import { getAgentModel } from '../config/ai.config.ts';
+import { withLLMRetry, parseLLMError } from '../utils/llm-error';
 
 const planSchema = z.object({
   researchSummary: z.string().optional(),
@@ -112,35 +113,24 @@ export async function generatePlan(goal: string, options?: { useWorkspace?: bool
   const systemPrompt = PLAN_INSTRUCTIONS(useWorkspace ? config.codebasePath : undefined, hasWeb);
   const prompt = `User goal:\n${goal}`;
 
-  async function tryGenerateStructured(maxRetries = 2) {
-    let attempt = 0;
-    while (true) {
-      try {
-        return await generateText({
+  async function tryGenerateStructured(maxRetries = 3) {
+    return withLLMRetry(
+      () =>
+        generateText({
           model,
           tools,
           stopWhen: stepCountIs(20),
           system: systemPrompt,
           prompt,
           output: Output.object({ schema: planSchema }),
-        });
-      } catch (err: any) {
-        const msg = String(err?.message ?? err ?? '');
-        const isAbort = err?.vercel?.ai?.error?.AI_APICallError || err?.name === 'AI_APICallError' || /aborted|timeout|504/i.test(msg);
-        if (!isAbort || attempt >= maxRetries) {
-          throw err;
-        }
-        attempt++;
-        const backoff = 500 * attempt;
-        console.warn(`generatePlan: transient API error, retrying in ${backoff}ms (attempt ${attempt})`);
-        await new Promise((r) => setTimeout(r, backoff));
-      }
-    }
+        }),
+      { maxRetries, context: "Plan" }
+    );
   }
 
   let result: any;
   try {
-    result = await tryGenerateStructured(2);
+    result = await tryGenerateStructured(3);
   } catch (err) {
     throw err;
   }

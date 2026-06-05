@@ -10,22 +10,7 @@ import { createAgentTools } from "./agent-tools";
 import { renderHTMLMarkdown } from "../tui/terminal-render";
 import { withSpinner } from "../tui/spinner";
 import { runApprovalFlow } from "./approval";
-
-async function withRetries<T>(operation: () => Promise<T>, retries = 2, delayMs = 1200): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-      if (attempt === retries) break;
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(chalk.yellow(`\nAI request failed (${attempt + 1}/${retries + 1}): ${message}. Retrying...`));
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-  throw lastError;
-}
+import { withLLMRetry, printLLMError } from "../utils/llm-error";
 
 export async function runAgentMode() {
   console.log(chalk.bold("\n🤖 Agent Mode\n"));
@@ -66,25 +51,26 @@ export async function runAgentMode() {
     let result;
     try {
       result = await withSpinner("Running agent…", async () =>
-        withRetries(() =>
-          agent.generate({
-            prompt: goal.trim(),
-            onStepFinish: ({ toolCalls }) => {
-              for (const tc of toolCalls) {
-                const preview = JSON.stringify(tc.input).slice(0, 160);
-                console.log(
-                  chalk.green("  ✓"),
-                  chalk.bold(String(tc.toolName)),
-                  chalk.dim(preview + (preview.length >= 160 ? "..." : "")),
-                );
-              }
-            },
-          }),
+        withLLMRetry(
+          () =>
+            agent.generate({
+              prompt: goal.trim(),
+              onStepFinish: ({ toolCalls }) => {
+                for (const tc of toolCalls) {
+                  const preview = JSON.stringify(tc.input).slice(0, 160);
+                  console.log(
+                    chalk.green("  ✓"),
+                    chalk.bold(String(tc.toolName)),
+                    chalk.dim(preview + (preview.length >= 160 ? "..." : "")),
+                  );
+                }
+              },
+            }),
+          { maxRetries: 3, context: "Agent" }
         ),
       );
     } catch (error) {
-      console.log(chalk.red("\nAgent request failed after retries."));
-      console.log(chalk.red(error instanceof Error ? error.message : String(error)));
+      printLLMError(error, "Agent");
       continue;
     }
 
@@ -155,13 +141,13 @@ Use file tools to stage changes. Implement the feature fully.`, tools: followToo
             let followResult;
             try {
               followResult = await withSpinner("Running follow-up agent…", async () =>
-                withRetries(() =>
-                  followAgent.generate({ prompt: followGoal }),
+                withLLMRetry(
+                  () => followAgent.generate({ prompt: followGoal }),
+                  { maxRetries: 3, context: "Agent follow-up" }
                 ),
               );
             } catch (err) {
-              console.log(chalk.red("\nFollow-up agent failed."));
-              console.log(chalk.red(err instanceof Error ? err.message : String(err)));
+              printLLMError(err, "Agent follow-up");
               continue;
             }
 

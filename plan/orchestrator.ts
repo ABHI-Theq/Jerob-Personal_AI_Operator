@@ -15,6 +15,7 @@ import type { PlanStep } from './types';
 import { renderHTMLMarkdown } from '../tui/terminal-render.ts';
 import { getAgentModel } from '../config/ai.config.ts';
 import { withSpinner } from '../tui/spinner';
+import { withLLMRetry, printLLMError } from '../utils/llm-error';
 
 function stepPrompt(goal: string, step: PlanStep): string {
   return [`Goal: ${goal}`, `Step: ${step.title}`, step.description].join('\n');
@@ -37,8 +38,7 @@ export async function runPlanMode(): Promise<void> {
       generatePlan(goal.trim(), { useWorkspace: includeWorkspace as boolean }),
     );
   } catch (err) {
-    console.log(chalk.red('Plan generation failed.'));
-    console.error(err);
+    printLLMError(err, "Plan");
     return;
   }
   printPlan(plan);
@@ -119,12 +119,24 @@ export async function runPlanMode(): Promise<void> {
     for (const step of planObj!.steps) {
       console.log(chalk.bold(`\n🔧 ${step.title}\n`));
       const agent = new ToolLoopAgent({ model: getAgentModel(), stopWhen: stepCountIs(30), tools });
-      const r = await agent.generate({ prompt: stepPrompt(planObj!.goal, step), onStepFinish: ({ toolCalls }) => {
-        for (const tc of toolCalls) {
-          const preview = JSON.stringify(tc?.input).slice(0, 160);
-          console.log(chalk.green('  ✓'), chalk.bold(String(tc?.toolName)), chalk.dim(preview + (preview.length >= 160 ? '...' : '')));
-        }
-      } });
+      let r;
+      try {
+        r = await withLLMRetry(
+          () => agent.generate({
+            prompt: stepPrompt(planObj!.goal, step),
+            onStepFinish: ({ toolCalls }) => {
+              for (const tc of toolCalls) {
+                const preview = JSON.stringify(tc?.input).slice(0, 160);
+                console.log(chalk.green('  ✓'), chalk.bold(String(tc?.toolName)), chalk.dim(preview + (preview.length >= 160 ? '...' : '')));
+              }
+            },
+          }),
+          { maxRetries: 3, context: `Step: ${step.title}` }
+        );
+      } catch (err) {
+        printLLMError(err, `Step: ${step.title}`);
+        continue;
+      }
       if (r.text?.trim()) console.log(renderHTMLMarkdown(r.text));
     }
 

@@ -1,6 +1,7 @@
 import { generateText } from "ai";
 import { getAgentModel, getAgentModel2, getAgentModel2Fallback } from "../config/ai.config";
 import type { TaskStep } from "./db";
+import { parseLLMError } from "../utils/llm-error";
 
 interface ParsedPlan {
   steps: TaskStep[];
@@ -72,11 +73,16 @@ export async function planScheduledTask(description: string): Promise<ParsedPlan
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: `Plan this task: ${description}` },
           ],
-          temperature: attempt === 0 ? 0.3 : 0.1, // lower temp on retry
+          temperature: attempt === 0 ? 0.3 : 0.1,
         });
         text = res.text?.trim() ?? "";
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
+        const parsed = parseLLMError(e);
+        // Auth/quota errors won't be fixed by trying another model — bail immediately
+        if (parsed.type === "auth" || parsed.type === "quota") {
+          throw new Error(`Scheduler planner: ${parsed.message}`);
+        }
         break; // try next model
       }
 

@@ -6,13 +6,13 @@ import { ActionTracker } from "../agent/action-tracker.ts";
 import { ToolExecutor } from "../agent/tool-executor.ts";
 import { defaultAgentConfig } from "../agent/types.ts";
 import { runApprovalFlow } from "../agent/approval.ts";
-// import { createWebTools } from "../plan/web-tools.ts";
 import { renderHTMLMarkdown } from "../tui/terminal-render.ts";
 import { getAgentModel } from "../config/ai.config.ts";
 import { createWebTools } from "../plan/web-tools.ts";
 import { withSpinner } from "../tui/spinner";
 import { createEmailTools } from "../email_ops/email-tools";
 import { sendMail } from "../email_ops/email_functions";
+import { withLLMRetry, printLLMError } from "../utils/llm-error";
 
 function createAskTools(executor: ToolExecutor) {
   return {
@@ -119,21 +119,31 @@ export async function runAskMode() {
       ? `Conversation so far:\n${context}\n\nNew question:\n${question.trim()}`
       : question.trim();
 
-    const result = await withSpinner("Thinking…", async () =>
-      agent.generate({
-        prompt,
-        onStepFinish: ({ toolCalls }) => {
-          for (const tc of toolCalls) {
-            const preview = JSON.stringify(tc.input).slice(0, 160);
-            console.log(
-              chalk.green("  ✓"),
-              chalk.bold(String(tc.toolName)),
-              chalk.dim(preview + (preview.length >= 160 ? "..." : "")),
-            );
-          }
-        },
-      }),
-    );
+    let result;
+    try {
+      result = await withSpinner("Thinking…", async () =>
+        withLLMRetry(
+          () =>
+            agent.generate({
+              prompt,
+              onStepFinish: ({ toolCalls }) => {
+                for (const tc of toolCalls) {
+                  const preview = JSON.stringify(tc.input).slice(0, 160);
+                  console.log(
+                    chalk.green("  ✓"),
+                    chalk.bold(String(tc.toolName)),
+                    chalk.dim(preview + (preview.length >= 160 ? "..." : "")),
+                  );
+                }
+              },
+            }),
+          { maxRetries: 3, context: "Ask" }
+        ),
+      );
+    } catch (error) {
+      printLLMError(error, "Ask");
+      continue;
+    }
 
     const answer = result.text?.trim() || "(no answer)";
     history.push({ question: question.trim(), answer });
@@ -166,14 +176,18 @@ export async function runAskMode() {
     if (next === 'email') {
       const emailTo = await text({ message: 'Send to (email address)?' });
       if (!isCancel(emailTo) && emailTo?.trim()) {
-        await withSpinner('Sending email…', async () =>
-          sendMail({
-            to: emailTo.trim(),
-            subject: `Ask Mode: ${(question as string).trim().slice(0, 60)}`,
-            body: answer,
-          })
-        );
-        console.log(chalk.green('✓ Email sent\n'));
+        try {
+          await withSpinner('Sending email…', async () =>
+            sendMail({
+              to: emailTo.trim(),
+              subject: `Ask Mode: ${(question as string).trim().slice(0, 60)}`,
+              body: answer,
+            })
+          );
+          console.log(chalk.green('✓ Email sent\n'));
+        } catch (err) {
+          console.log(chalk.red(`✖ Email failed: ${err instanceof Error ? err.message : String(err)}\n`));
+        }
       }
       continue;
     }
@@ -189,10 +203,19 @@ export async function runAskMode() {
     .map((item) => `User: ${item.question}\nAssistant: ${item.answer}`)
     .join("\n\n")}`;
 
-  const summaryResult = await withSpinner('Summarizing…', async () =>
-    agent.generate({ prompt: summaryPrompt }),
-  );
-  const summary = summaryResult.text?.trim() || history.map((item) => `- ${item.answer}`).join('\n');
+  let summaryResult;
+  try {
+    summaryResult = await withSpinner("Summarizing…", async () =>
+      withLLMRetry(
+        () => agent.generate({ prompt: summaryPrompt }),
+        { maxRetries: 2, context: "Ask summary" }
+      ),
+    );
+  } catch (err) {
+    printLLMError(err, "Ask summary");
+    return;
+  }
+  const summary = summaryResult.text?.trim() || history.map((item) => `- ${item.answer}`).join("\n");
 
   const filename = await text({
     message: 'Filename',

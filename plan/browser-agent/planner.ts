@@ -2,6 +2,8 @@ import { getAgentModel, getAgentModel2, getAgentModel2Fallback } from "../../con
 import type { BrowserPlan, BrowserStep } from "./types";
 import { generateText } from "ai";
 import { z } from "zod";
+import chalk from "chalk";
+import { parseLLMError } from "../../utils/llm-error";
 
 const optionalString = () =>
   z.preprocess((value) => (value === null ? undefined : value), z.string().optional());
@@ -126,19 +128,30 @@ Respond with valid JSON only. No markdown, no explanations, just the JSON object
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     // Switch to fallback model after 2 failed attempts
     if (attempt === 3 && !usingFallback) {
-      console.log("Primary model failed, trying fallback model...");
+      console.log(chalk.dim("Primary model failed, switching to fallback model..."));
       model = getAgentModel2Fallback();
       usingFallback = true;
     }
 
-    const response = await generateText({
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.7,
-    });
+    let response;
+    try {
+      response = await generateText({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.7,
+      });
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const parsed = parseLLMError(err);
+      // Don't retry on auth/quota errors
+      if (!parsed.retryable) {
+        throw new Error(`Browser planner: ${parsed.message}`);
+      }
+      continue;
+    }
 
     const rawText = response.text ?? "";
     

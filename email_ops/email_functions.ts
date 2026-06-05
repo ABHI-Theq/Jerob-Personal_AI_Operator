@@ -5,6 +5,7 @@ import { google } from "googleapis";
 import chalk from "chalk";
 import { generateText } from "ai";
 import { getAgentModel } from "../config/ai.config";
+import { withLLMRetry } from "../utils/llm-error";
 import type {
   SendMailInput,
   ReadMailInput,
@@ -29,9 +30,17 @@ import type {
 const getGmailClient = async () => {
   let ref = isAuth();
   if (ref === null) {
-    console.log(chalk.green.bold("Authentication Started"));
-    const { tokens } = (await authenticate()) as any;
-    ref = tokens.refresh_token;
+    console.log(chalk.green.bold("Gmail not authenticated — starting OAuth flow..."));
+    try {
+      const result = (await authenticate()) as any;
+      ref = result?.refresh_token ?? result?.tokens?.refresh_token ?? null;
+    } catch (err) {
+      throw new Error(
+        `Gmail OAuth failed: ${err instanceof Error ? err.message : String(err)}. ` +
+        `Make sure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in .env.`
+      );
+    }
+    if (!ref) throw new Error("Gmail OAuth completed but no refresh token was returned. Try revoking access at myaccount.google.com/permissions and re-authenticating.");
   }
   oauth2Client.setCredentials({ refresh_token: ref });
   return google.gmail({ version: "v1", auth: oauth2Client });
@@ -126,9 +135,16 @@ export async function sendMail(input: SendMailInput) {
       requestBody: { raw: encodeMessage(raw) },
     });
     return res.data;
-  } catch (e) {
-    console.error(chalk.red.bold("sendMail error: " + e));
-    throw e;
+  } catch (e: any) {
+    const status = e?.response?.status ?? e?.code;
+    const detail = e?.response?.data?.error?.message ?? e?.message ?? String(e);
+    if (status === 401 || status === 403) {
+      throw new Error(`Gmail auth error (${status}): ${detail}. Re-authenticate by running an email operation again.`);
+    }
+    if (status === 429) {
+      throw new Error(`Gmail rate limit hit. Wait a moment and try again.`);
+    }
+    throw new Error(`sendMail failed: ${detail}`);
   }
 }
 
@@ -164,10 +180,13 @@ export async function searchMail(input: SearchMailInput): Promise<EmailMessage[]
 /** Summarize a message using LLM */
 export async function summarizeMail(input: ReadMailInput): Promise<string> {
   const msg = await readMail(input);
-  const { text } = await generateText({
-    model: getAgentModel(),
-    prompt: `Summarize this email concisely in 2-3 sentences:\n\nFrom: ${msg.from}\nSubject: ${msg.subject}\n\n${msg.body}`,
-  });
+  const { text } = await withLLMRetry(
+    () => generateText({
+      model: getAgentModel(),
+      prompt: `Summarize this email concisely in 2-3 sentences:\n\nFrom: ${msg.from}\nSubject: ${msg.subject}\n\n${msg.body}`,
+    }),
+    { maxRetries: 2, context: "summarizeMail" }
+  );
   return text;
 }
 
@@ -259,30 +278,36 @@ export async function watchMail(input: WatchInput) {
 /** Classify a message into a category using LLM */
 export async function classifyMail(input: ClassifyInput): Promise<string> {
   const msg = await readMail({ messageId: input.messageId });
-  const { text } = await generateText({
-    model: getAgentModel(),
-    prompt: `Classify this email into exactly one category from: [work, personal, newsletter, spam, finance, travel, support, social, other].
+  const { text } = await withLLMRetry(
+    () => generateText({
+      model: getAgentModel(),
+      prompt: `Classify this email into exactly one category from: [work, personal, newsletter, spam, finance, travel, support, social, other].
 Reply with only the category name.
 
 From: ${msg.from}
 Subject: ${msg.subject}
 Body: ${msg.body.slice(0, 500)}`,
-  });
+    }),
+    { maxRetries: 2, context: "classifyMail" }
+  );
   return text.trim().toLowerCase();
 }
 
 /** Extract action items / tasks from a message using LLM */
 export async function extractTasks(input: ExtractTasksInput): Promise<string[]> {
   const msg = await readMail({ messageId: input.messageId });
-  const { text } = await generateText({
-    model: getAgentModel(),
-    prompt: `Extract all action items or tasks from this email. Return one task per line, no numbering or bullets.
+  const { text } = await withLLMRetry(
+    () => generateText({
+      model: getAgentModel(),
+      prompt: `Extract all action items or tasks from this email. Return one task per line, no numbering or bullets.
 If there are no tasks, return "NONE".
 
 From: ${msg.from}
 Subject: ${msg.subject}
 Body: ${msg.body}`,
-  });
+    }),
+    { maxRetries: 2, context: "extractTasks" }
+  );
   const lines = text
     .split("\n")
     .map((l) => l.trim())
@@ -328,10 +353,13 @@ export async function digest(input: DigestInput): Promise<string> {
     .map((m, i) => `${i + 1}. From: ${m.from} | Subject: ${m.subject} | ${m.body.slice(0, 100)}`)
     .join("\n");
 
-  const { text } = await generateText({
-    model: getAgentModel(),
-    prompt: `Create a brief digest of these emails. Group by topic where relevant, highlight anything urgent.\n\n${summary}`,
-  });
+  const { text } = await withLLMRetry(
+    () => generateText({
+      model: getAgentModel(),
+      prompt: `Create a brief digest of these emails. Group by topic where relevant, highlight anything urgent.\n\n${summary}`,
+    }),
+    { maxRetries: 2, context: "digest" }
+  );
   return text;
 }
 

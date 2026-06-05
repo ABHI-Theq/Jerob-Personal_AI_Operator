@@ -213,8 +213,25 @@ export async function executeBrowserPlan(
   plan: BrowserPlan,
   previousFeedback?: string
 ): Promise<ExecutionResult[]> {
-  const stagehand = getStagehandClient();
-  await stagehand.init();
+  let stagehand: InstanceType<typeof Stagehand>;
+  try {
+    stagehand = getStagehandClient();
+    await stagehand.init();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const hint = msg.toLowerCase().includes("executable")
+      ? " Make sure Brave browser is installed at the configured path in executor.ts."
+      : msg.toLowerCase().includes("connect") || msg.toLowerCase().includes("timeout")
+      ? " Check that no other browser instance is blocking port 9222."
+      : "";
+    return [{
+      success: false,
+      error: `Browser failed to start: ${msg}${hint}`,
+      message: "Browser initialization failed",
+      stepNumber: 1,
+      action: "agent",
+    }];
+  }
 
   // Build the instruction from the plan goal + feedback context
   const instruction = previousFeedback
@@ -251,41 +268,44 @@ Only call done when all 6 checks pass.
 `;
 
   // Ensure downloads folder exists
- if(!existsSync(DOWNLOADS_PATH)) mkdirSync(DOWNLOADS_PATH, { recursive: true });
+  if (!existsSync(DOWNLOADS_PATH)) mkdirSync(DOWNLOADS_PATH, { recursive: true });
 
-  // Use CDP directly to intercept downloads — stagehand.context.conn is a CdpConnection.
-  const conn = (stagehand.context as any).conn;
+  // Use CDP to intercept downloads — may not be available on all setups
+  const conn = (stagehand.context as any)?.conn;
   const downloadedFiles: string[] = [];
 
-  // Tell the browser to save all downloads to our path automatically
-  await conn.send("Browser.setDownloadBehavior", {
-    behavior: "allow",
-    downloadPath: DOWNLOADS_PATH,
-    eventsEnabled: true,
-  });
+  if (conn && typeof conn.send === "function") {
+    try {
+      await conn.send("Browser.setDownloadBehavior", {
+        behavior: "allow",
+        downloadPath: DOWNLOADS_PATH,
+        eventsEnabled: true,
+      });
 
-  // Track filenames as downloads begin
-  const pendingDownloads = new Map<string, string>(); // guid → filename
-  conn.on("Browser.downloadWillBegin", (params: any) => {
-    const filename = params.suggestedFilename || `download-${params.guid}`;
-    const savePath = resolve(DOWNLOADS_PATH, filename);
-    pendingDownloads.set(params.guid, savePath);
-    console.log(`[download] starting → ${savePath}`);
-  });
+      const pendingDownloads = new Map<string, string>();
+      conn.on("Browser.downloadWillBegin", (params: any) => {
+        const filename = params.suggestedFilename || `download-${params.guid}`;
+        const savePath = resolve(DOWNLOADS_PATH, filename);
+        pendingDownloads.set(params.guid, savePath);
+        console.log(`[download] starting → ${savePath}`);
+      });
 
-  conn.on("Browser.downloadProgress", (params: any) => {
-    if (params.state === "completed") {
-      const savePath = pendingDownloads.get(params.guid);
-      if (savePath) {
-        downloadedFiles.push(savePath);
-        pendingDownloads.delete(params.guid);
-        console.log(`[download] saved → ${savePath}`);
-      }
-    } else if (params.state === "canceled") {
-      pendingDownloads.delete(params.guid);
-      console.warn(`[download] canceled guid=${params.guid}`);
+      conn.on("Browser.downloadProgress", (params: any) => {
+        if (params.state === "completed") {
+          const savePath = pendingDownloads.get(params.guid);
+          if (savePath) {
+            downloadedFiles.push(savePath);
+            pendingDownloads.delete(params.guid);
+            console.log(`[download] saved → ${savePath}`);
+          }
+        } else if (params.state === "canceled") {
+          pendingDownloads.delete(params.guid);
+        }
+      });
+    } catch {
+      // CDP download tracking unavailable — continue without it
     }
-  });
+  }
 
   try {
     const agent = stagehand.agent({

@@ -64,4 +64,7 @@ async function updateTaskEmail() {
   console.log();
 }
 
-updateTaskEmail().catch(console.error);
+updateTaskEmail().catch((err) => {
+  console.error(chalk.red(`\n✖ ${err instanceof Error ? err.message : String(err)}\n`));
+  process.exit(1);
+});

@@ -27,9 +27,9 @@ export const startArena = async () => {
   let ascii: string;
 
   try {
-    ascii = figlet.textSync("Jimmy", { font: HF });
+    ascii = figlet.textSync("Jerob", { font: HF });
   } catch (e) {
-    ascii = figlet.textSync("Jimmy", { font: "Standard" });
+    ascii = figlet.textSync("Jerob", { font: "Standard" });
   }
 
   printBannerWithShadow(ascii);
@@ -49,10 +49,18 @@ export const startArena = async () => {
       return "END";
     }
     if (option == "CLI") {
-      await runCLIMode();
+      try {
+        await runCLIMode();
+      } catch (err) {
+        console.log(chalk.red(`\n✖ CLI error: ${err instanceof Error ? err.message : String(err)}\n`));
+      }
       continue;
     } else if (option == "Telegram") {
-      await runTelegramMode()
+      try {
+        await runTelegramMode();
+      } catch (err) {
+        console.log(chalk.red(`\n✖ Telegram error: ${err instanceof Error ? err.message : String(err)}\n`));
+      }
       continue;
     }
   }

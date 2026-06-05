@@ -63,11 +63,12 @@ export async function syncGoogleRefreshToken(refreshToken: string): Promise<void
  */
 export async function syncAllSecrets(): Promise<void> {
   const pairs: [string, string | undefined][] = [
-    ["openrouter_key", process.env.OPENROUTER_KEY],
+    ["openrouter_key",   process.env.OPENROUTER_KEY],
     ["openrouter_model", process.env.OPENROUTER_MODEL],
-    ["groq_api_key", process.env.GROQ_API_KEY],
-    ["firecrawl_key", process.env.FIRECRAWL_KEY],
-    ["google_client_id", process.env.GOOGLE_CLIENT_ID],
+    ["groq_api_key",     process.env.GROQ_API_KEY],
+    ["firecrawl_key",    process.env.FIRECRAWL_KEY],
+    ["google_api_key",   process.env.GOOGLE_GENERATIVE_AI_API_KEY],  // for Gemini in Edge Function
+    ["google_client_id",     process.env.GOOGLE_CLIENT_ID],
     ["google_client_secret", process.env.GOOGLE_CLIENT_SECRET],
   ];
 

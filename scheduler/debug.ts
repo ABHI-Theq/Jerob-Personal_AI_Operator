@@ -3,13 +3,13 @@
  * Run: bun run scheduler/debug.ts
  */
 
-import { db, getAllTasks, getRunsForTask } from "./db";
+import { getDb, getAllTasks, getRunsForTask } from "./db";
 import chalk from "chalk";
 
 async function checkCredentials() {
   console.log(chalk.bold("\n🔑 Checking Credentials in user_config...\n"));
   
-  const { data, error } = await db.from("user_config").select("key,updated_at");
+  const { data, error } = await getDb().from("user_config").select("key,updated_at");
   
   if (error) {
     console.log(chalk.red(`❌ Error: ${error.message}`));
@@ -86,7 +86,7 @@ async function checkCronStatus() {
   
   try {
     // Check if cron job exists
-    const { data: cronJobs, error: cronError } = await db.rpc("pg_cron_job_status" as any);
+    const { data: cronJobs, error: cronError } = await getDb().rpc("pg_cron_job_status" as any);
     
     if (cronError && cronError.message.includes("does not exist")) {
       console.log(chalk.yellow("⚠️  Cannot check pg_cron status via RPC (normal for some Supabase setups)"));
@@ -178,4 +178,7 @@ async function main() {
   console.log();
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(chalk.red(`\n✖ Debug tool crashed: ${err instanceof Error ? err.message : String(err)}\n`));
+  process.exit(1);
+});

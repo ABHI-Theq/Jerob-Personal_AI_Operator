@@ -2,11 +2,12 @@
 import chalk from "chalk";
 import {program} from "commander";
 import { startArena } from "./tui/spinup";
-import { authenticate, getAllKeys, updateApiKey, resetAuth } from "./auth/auth";
+import { authenticate, getAllKeys, updateApiKey, resetAuth, switchModelFlow } from "./auth/auth";
+import { writeEnvFile } from "./auth/env-writer";
 import dotenv from "dotenv";
 dotenv.config({ path: "./.env" });
 
-program.name("jimmy").description(" Your personal Assistant sits in your computer").version("0.1.0")
+program.name("jerob").description(" Your personal Assistant sits in your computer").version("0.1.0")
 
 program.command("jet")
 .description("agent spin up command")
@@ -15,7 +16,11 @@ program.command("jet")
         try {
             const { config, password } = await authenticate();
             const keys = getAllKeys(config, password);
-            // Apply all stored keys to process.env (skip empty values)
+
+            // Write .env so subprocesses and tools that read it directly work too
+            writeEnvFile(keys);
+
+            // Apply all keys to process.env (skip empty values)
             for (const [k, v] of Object.entries(keys)) {
                 if (v) process.env[k] = v;
             }
@@ -33,8 +38,30 @@ program.command("jet")
     }
 )
 
+program.command("switch-model")
+.description("Switch the active model for any provider (OpenRouter, Gemini, Claude, OpenAI, Groq)")
+.action(async () => {
+    try {
+        const { config, password: pwd } = await authenticate();
+        await switchModelFlow(config, pwd);
+        // Rewrite .env with the updated model overrides
+        const keys = getAllKeys(config, pwd);
+        writeEnvFile(keys);
+        for (const [k, v] of Object.entries(keys)) {
+            if (v) process.env[k] = v;
+        }
+    } catch (error) {
+        if (error instanceof Error && error.message.includes("cancelled")) {
+            console.log(chalk.yellow("\n✓ Cancelled\n"));
+        } else {
+            console.log(chalk.red(error instanceof Error ? error.message : String(error)));
+        }
+        process.exit(0);
+    }
+});
+
 program.command("set-key")
-.description("Change the stored OpenRouter API key")
+.description("Update stored API keys or model preferences")
 .action(async () => {
     try {
         await updateApiKey();
@@ -42,7 +69,7 @@ program.command("set-key")
         if (error instanceof Error && error.message.includes("cancelled")) {
             console.log(chalk.yellow("\n✓ Update cancelled\n"));
         } else {
-            console.log(chalk.red("Failed to update API key"));
+            console.log(chalk.red("Failed to update"));
             console.log(chalk.red(error instanceof Error ? error.message : String(error)));
         }
         process.exit(0);
@@ -79,7 +106,13 @@ program.command("sync-credentials")
 program.command("scheduler-debug")
 .description("Debug scheduler: check tasks, credentials, and test Edge Function")
 .action(async () => {
-    await import("./scheduler/debug");
+    try {
+        await import("./scheduler/debug");
+    } catch (error) {
+        console.log(chalk.red("Scheduler debug failed"));
+        console.log(chalk.red(error instanceof Error ? error.message : String(error)));
+        process.exit(1);
+    }
 });
 
 await program.parseAsync(process.argv)

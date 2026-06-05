@@ -2,6 +2,7 @@ import { getAgentModel2 } from "../../config/ai.config";
 import type { EvaluationResult, ExecutionResult, BrowserPlan } from "./types";
 import { generateText } from "ai";
 import { z } from "zod";
+import { withLLMRetry } from "../../utils/llm-error";
 
 const NUMBER_WORDS: Record<string, number> = {
   zero: 0,
@@ -169,12 +170,15 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
 
   Original Query: "${query}"`;
 
-  const response = await generateText({
-    model,
-    system: systemPrompt,
-    prompt: userPrompt,
-    temperature: 0.3,
-  });
+  const response = await withLLMRetry(
+    () => generateText({
+      model,
+      system: systemPrompt,
+      prompt: userPrompt,
+      temperature: 0.3,
+    }),
+    { maxRetries: 2, context: "Evaluator" }
+  );
 
   const extractJsonObjectFromText = (text: string): string | null => {
     let jsonText = text.trim();

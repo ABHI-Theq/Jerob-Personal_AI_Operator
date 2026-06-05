@@ -10,7 +10,7 @@ import {
   getRunsForTask,
 } from "./db";
 import { planScheduledTask, computeNextRun } from "./planner";
-import { loadConfig } from "../email_ops/email_pass_store";
+import { printLLMError } from "../utils/llm-error";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -97,9 +97,15 @@ async function addTask() {
   });
   if (isCancel(desc) || !desc?.trim()) return;
 
-  const plan = await withSpinner("Planning task with AI…", () =>
-    planScheduledTask(desc.trim())
-  );
+  let plan;
+  try {
+    plan = await withSpinner("Planning task with AI…", () =>
+      planScheduledTask(desc.trim())
+    );
+  } catch (err) {
+    printLLMError(err, "Scheduler planner");
+    return;
+  }
 
   console.log(chalk.bold(`\nTask name:  ${plan.name}`));
   console.log(chalk.bold(`Cron:       ${plan.cron}`));
@@ -344,18 +350,13 @@ async function manageTask() {
 // ── Main entry ────────────────────────────────────────────────────────────────
 
 function showDeployInstructions() {
-  const config = loadConfig();
-  const refreshToken = config?.refresh_token ?? "<run gmail auth first>";
   console.log(chalk.bold("\n🚀 Serverless Deploy (Supabase Edge Function)\n"));
   console.log("1. Install Supabase CLI:  npm i -g supabase");
   console.log("2. Login:                 supabase login");
   console.log("3. Link project:          supabase link --project-ref <YOUR_PROJECT_REF>");
-  console.log("4. Deploy function:       .\\supabase\\deploy.ps1");
-  console.log("5. Set service role key:");
-  console.log(chalk.cyan("   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>"));
-  console.log("6. Set Gmail refresh token:");
-  console.log(chalk.cyan(`   supabase secrets set GOOGLE_REFRESH_TOKEN=${refreshToken}`));
-  console.log("7. Run the SQL in:        supabase/functions/scheduler-tick/setup.sql");
+  console.log("4. Deploy + sync keys:    .\\supabase\\deploy.ps1");
+  console.log("5. Run setup SQL once:");
+  console.log(chalk.cyan("   Open scheduler/SETUP-READY.sql in Supabase SQL Editor and click RUN"));
   console.log(chalk.green("\nAfter deploy, tasks run every minute in Supabase — no local process needed.\n"));
 }
 
@@ -383,7 +384,9 @@ export async function runSchedulerMode() {
       if (option === "manage") await manageTask();
       if (option === "deploy") showDeployInstructions();
     } catch (err) {
-      console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}\n`));
+      // DB errors, network errors — print clearly
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(chalk.red(`\n✖ ${msg}\n`));
     }
   }
 }
