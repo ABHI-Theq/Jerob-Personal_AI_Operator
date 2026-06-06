@@ -17,8 +17,28 @@ import { getAgentModel } from '../config/ai.config.ts';
 import { withSpinner } from '../tui/spinner';
 import { withLLMRetry, printLLMError } from '../utils/llm-error';
 
-function stepPrompt(goal: string, step: PlanStep): string {
-  return [`Goal: ${goal}`, `Step: ${step.title}`, step.description].join('\n');
+function stepPrompt(goal: string, step: PlanStep, projectDir?: string): string {
+  const parts = [`Overall Goal: ${goal}`, `Current Step: ${step.title}`, step.description];
+  if (projectDir) {
+    parts.push(`\nIMPORTANT: The project already exists at: ${projectDir}\nAll file operations MUST be inside this folder. Do NOT create a new project folder.`);
+  }
+  return parts.join('\n');
+}
+
+/** After each step, detect which project folder was created/modified */
+function detectProjectDir(codebasePath: string, knownDir?: string): string | undefined {
+  if (knownDir) return knownDir;
+  // Look for folders that contain a package.json — likely the project root
+  try {
+    const entries = fs.readdirSync(codebasePath, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      if (['node_modules', '.git', 'dist', 'build'].includes(e.name)) continue;
+      const pkgPath = path.join(codebasePath, e.name, 'package.json');
+      if (fs.existsSync(pkgPath)) return e.name;
+    }
+  } catch {}
+  return undefined;
 }
 
 export async function runPlanMode(): Promise<void> {
@@ -108,6 +128,7 @@ export async function runPlanMode(): Promise<void> {
     }
 
     const config = defaultAgentConfig();
+    // Single tracker accumulates all step actions for the final review log
     const tracker = new ActionTracker();
     const executor = new ToolExecutor(tracker, config);
 
@@ -116,14 +137,41 @@ export async function runPlanMode(): Promise<void> {
       ...(process.env.FIRECRAWL_API_KEY ? createWebTools(tracker) : {}),
     };
 
-    for (const step of planObj!.steps) {
-      console.log(chalk.bold(`\n🔧 ${step.title}\n`));
-      const agent = new ToolLoopAgent({ model: getAgentModel(), stopWhen: stepCountIs(30), tools });
+    let projectDir: string | undefined;
+    const totalSteps = planObj!.steps.length;
+    const allErrors: string[] = [];
+
+    for (let stepIdx = 0; stepIdx < planObj!.steps.length; stepIdx++) {
+      const step = planObj!.steps[stepIdx]!;
+      console.log(chalk.bold(`\n🔧 [${stepIdx + 1}/${totalSteps}] ${step.title}\n`));
+
+      // Detect project folder from real disk (visible after previous step was applied)
+      projectDir = detectProjectDir(config.codebasePath, projectDir);
+
+      const agent = new ToolLoopAgent({
+        model: getAgentModel(),
+        stopWhen: stepCountIs(30),
+        tools,
+        instructions: `
+WorkDir: ${config.codebasePath}
+You are an AI coding agent executing ONE step of a multi-step plan.
+
+CRITICAL RULES:
+1. This is step ${stepIdx + 1} of ${totalSteps}. Do ONLY what this step describes — no more, no less.
+2. ${projectDir
+  ? `The project already exists at "${projectDir}/" (relative to WorkDir). ALL files MUST go inside "${projectDir}/". NEVER create a new top-level folder.`
+  : `If this step scaffolds a new project, choose ONE folder name. Every subsequent step will use that same folder.`}
+3. ALWAYS call list_files first to see what already exists on disk. Use modify_file for existing files, create_file only for genuinely new ones.
+4. NEVER create a duplicate or alternate project folder. There is exactly ONE project folder.
+5. Use create_file / modify_file / create_folder tools only — never print code as plain text.
+        `.trim(),
+      });
+
       let r;
       try {
         r = await withLLMRetry(
           () => agent.generate({
-            prompt: stepPrompt(planObj!.goal, step),
+            prompt: stepPrompt(planObj!.goal, step, projectDir),
             onStepFinish: ({ toolCalls }) => {
               for (const tc of toolCalls) {
                 const preview = JSON.stringify(tc?.input).slice(0, 160);
@@ -138,18 +186,29 @@ export async function runPlanMode(): Promise<void> {
         continue;
       }
       if (r.text?.trim()) console.log(renderHTMLMarkdown(r.text));
+
+      // Auto-approve and apply this step's staged changes immediately to disk
+      // so the next step's list_files sees the real files
+      const pending = tracker.getPendingMutations();
+      for (const a of pending) tracker.updateStatus(a.id, 'approved', true);
+      const { errors } = executor.applyApprovedFromTracker();
+      executor.clearStaging();
+      if (errors.length) {
+        allErrors.push(...errors.map(e => `[${step.title}] ${e}`));
+        console.log(chalk.yellow(`  ⚠ ${errors.length} error(s) applying step — continuing`));
+      } else {
+        console.log(chalk.green(`  ✓ Step ${stepIdx + 1} applied to disk\n`));
+      }
+
+      // Re-detect project dir now that files are on disk
+      projectDir = detectProjectDir(config.codebasePath, projectDir);
     }
 
-    const ok = await runApprovalFlow(tracker);
-    if (!ok) return executor.clearStaging();
-
-    const { errors, newFiles } = executor.applyApprovedFromTracker();
-    if (errors.length) {
-      console.log(chalk.red('\nSome operations reported errors:\n'));
-      for (const e of errors) console.log(chalk.red(`  • ${e}`));
+    if (allErrors.length) {
+      console.log(chalk.red('\nErrors during execution:'));
+      for (const e of allErrors) console.log(chalk.red(`  • ${e}`));
     } else {
-      console.log(chalk.green('\n✓ Applied.\n'));
+      console.log(chalk.green('\n✓ All steps applied.\n'));
     }
-    executor.clearStaging();
   }
 }

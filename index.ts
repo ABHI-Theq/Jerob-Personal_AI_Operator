@@ -20,9 +20,14 @@ program.command("jet")
             // Write .env so subprocesses and tools that read it directly work too
             writeEnvFile(keys);
 
-            // Apply all keys to process.env (skip empty values)
+            // Apply all keys to process.env — set present values, clear stale ones
             for (const [k, v] of Object.entries(keys)) {
-                if (v) process.env[k] = v;
+                if (v) {
+                    process.env[k] = v;
+                } else {
+                    // Clear any stale value dotenv may have pre-loaded from .env
+                    delete process.env[k];
+                }
             }
             process.env.OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/free";
             await startArena()
@@ -48,7 +53,11 @@ program.command("switch-model")
         const keys = getAllKeys(config, pwd);
         writeEnvFile(keys);
         for (const [k, v] of Object.entries(keys)) {
-            if (v) process.env[k] = v;
+            if (v) {
+                process.env[k] = v;
+            } else {
+                delete process.env[k];
+            }
         }
     } catch (error) {
         if (error instanceof Error && error.message.includes("cancelled")) {

@@ -10,6 +10,7 @@ import path from "node:path";
 const ENV_PATH = path.resolve(process.cwd(), ".env");
 
 // Keys we own and manage — any other lines in .env are left untouched
+// PORT is intentionally excluded — handled separately below so it's never blanked out
 const MANAGED_KEYS = new Set([
   "OPENROUTER_KEY",
   "OPENROUTER_MODEL",
@@ -34,7 +35,6 @@ const MANAGED_KEYS = new Set([
   "MODEL_CLAUDE",
   "MODEL_OPENAI",
   "MODEL_GROQ",
-  "PORT",
 ]);
 
 /**
@@ -52,18 +52,26 @@ export function writeEnvFile(keys: Record<string, string>): void {
   }
 
   const written = new Set<string>();
+  const seenLines = new Set<string>(); // track to deduplicate repeated blank keys
 
-  // Update existing managed lines in-place
-  const updatedLines = existingLines.map((line) => {
-    const match = line.match(/^([A-Z_][A-Z0-9_]*)=/);
-    if (!match) return line; // comment, blank line, or unmanaged — keep as-is
-    const key = match[1]!;
-    if (!MANAGED_KEYS.has(key)) return line; // not our key — keep as-is
-    const value = keys[key];
-    if (!value) return line; // empty value — keep existing line unchanged
-    written.add(key);
-    return `${key}=${value}`;
-  });
+  // Update existing managed lines in-place, deduplicate PORT
+  const updatedLines = existingLines
+    .map((line) => {
+      const match = line.match(/^([A-Z_][A-Z0-9_]*)=/);
+      if (!match) return line; // comment, blank line — keep as-is
+      const key = match[1]!;
+
+      // Deduplicate: drop repeated occurrences of the same key
+      if (seenLines.has(key)) return null;
+      seenLines.add(key);
+
+      if (!MANAGED_KEYS.has(key)) return line; // not our key — keep as-is
+      const value = keys[key];
+      written.add(key);
+      if (!value) return `${key}=`; // clear stale value
+      return `${key}=${value}`;
+    })
+    .filter((line): line is string => line !== null);
 
   // Append any managed keys that weren't already in the file
   const newLines: string[] = [];
@@ -73,8 +81,9 @@ export function writeEnvFile(keys: Record<string, string>): void {
     }
   }
 
-  // Ensure PORT is always set (needed by Gmail OAuth server)
-  if (!written.has("PORT") && !keys["PORT"]) {
+  // PORT: only append if not already present with a value in the file
+  const portLine = updatedLines.find((l) => l.match(/^PORT=\S+/));
+  if (!portLine) {
     newLines.push("PORT=8787");
   }
 

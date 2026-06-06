@@ -12,6 +12,8 @@ export interface LLMError {
  */
 export function parseLLMError(err: unknown): LLMError {
   const raw = err instanceof Error ? err.message : String(err);
+  // Log the raw provider error so we can see exactly what the API returned
+  console.error(chalk.dim(`[LLM raw error] ${raw}`));
   const lower = raw.toLowerCase();
 
   // Rate limit / quota

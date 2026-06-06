@@ -5,6 +5,7 @@ import {
   stepCountIs,
   tool,
   wrapLanguageModel,
+  type LanguageModel,
 } from 'ai';
 import { z } from 'zod';
 import chalk from 'chalk';
@@ -100,7 +101,7 @@ export async function generatePlan(goal: string, options?: { useWorkspace?: bool
   const executor = new ToolExecutor(tracker, config);
   const hasWeb = !!process.env.FIRECRAWL_API_KEY?.trim();
   const model = wrapLanguageModel({
-    model: getAgentModel(),
+    model: getAgentModel() as unknown as LanguageModel,
     middleware: extractJsonMiddleware(),
   });
 

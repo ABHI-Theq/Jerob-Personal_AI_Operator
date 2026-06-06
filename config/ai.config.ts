@@ -27,7 +27,8 @@ function activeModel(provider: keyof typeof DEFAULT_MODELS): string {
 
 function openrouterModel(modelId: string): LanguageModel | null {
   const key = process.env.OPENROUTER_KEY?.trim();
-  if (!key) return null;
+  // OpenRouter keys start with sk-or-v1- — skip if key looks invalid
+  if (!key || !key.startsWith("sk-or-v1-")) return null;
   return createOpenRouter({ apiKey: key })(modelId);
 }
 
@@ -145,7 +146,7 @@ export function getAgentModel2Fallback(): LanguageModel {
     [
       () => openrouterModel(DEFAULT_MODELS.openrouter_free),
       () => groqModel(),
-      () => geminiModel("gemini-1.5-flash"),
+      () => geminiModel("gemini-2.5-flash"),
     ],
     "Fallback"
   );

@@ -24,19 +24,21 @@ export async function runAgentMode() {
     const agent = new ToolLoopAgent({
       model: getAgentModel(),
       instructions: `
-    WorkDir: ${config.codebasePath}
-    You are a helpful AI assistant to perform different tasks based on the query.
-    Use the provided file tools to stage real workspace changes before asking for approval.
-    If the user asks for a landing page or file creation, do not only describe the file in prose. Use create_file with the exact relative path and content.
-    If the user asks to modify existing code, use modify_file with the full new file contents.
-    If the user asks to delete a file or folder, use delete_file or create_folder as appropriate.
-    Keep all changes staged until the user approves them. Do not finalize or write anything before approval.
-    For project scaffolding (React, Vite, Next, create-react-app, etc.) prefer using execute_shell to run package managers and scaffolding commands (e.g., "npx create-react-app my-app", "pnpm create vite my-app", "bun create vite my-app"," npx create-next-app@latest ").
-    When using execute_shell for scaffolding, run the command in a new subfolder and also stage any resulting important files (index.html, package.json, src/) using read_file/list_files or create_file as appropriate so the user can review them.
-    If the user asks for a new project scaffold or a brand-new standalone app, create it inside a new subfolder under the current workspace. If they are asking to enhance or fix the existing codebase, keep changes in the current workspace root or appropriate existing folders.
-    Do not create a new top-level folder unless the user explicitly requests a new project or new application scaffold.
-    Always show the file path(s) as tool calls, not only in plain text.
-    `,
+WorkDir: ${config.codebasePath}
+You are a helpful AI coding agent. You MUST use the provided file tools to stage all workspace changes — never describe or print code as plain text.
+Rules:
+- Use create_file to create new files with their full content. NEVER print file contents in plain text.
+- Use modify_file to update existing files with full new content. NEVER print file contents in plain text.
+- Use create_folder to create directory structures.
+- Use delete_file to delete files.
+- Use read_file and list_files to inspect the workspace before writing.
+- For project scaffolding (React, Vite, Next.js, etc.) use execute_shell to run scaffold commands (e.g. "npx create-react-app my-app", "bun create vite my-app", "npx create-next-app@latest").
+- When using execute_shell for scaffolding, also stage key resulting files using create_file so the user can review them.
+- New standalone projects go in a new subfolder. Enhancements to existing code stay in the current workspace root.
+- Do not create a new top-level folder unless the user explicitly requests a new project.
+- Always show file paths as tool calls, never only in plain text.
+- Stage all changes pending user approval. Do not finalize anything before approval.
+      `.trim(),
       tools,
       stopWhen: stepCountIs(30),
     });
