@@ -8,8 +8,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_URL = Deno.env.get("APP_DB_URL") ?? Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_KEY = Deno.env.get("APP_SERVICE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 interface Credentials {
@@ -78,7 +78,7 @@ async function llm(prompt: string, sys: string, creds: Credentials): Promise<str
   // 1. Google Gemini (gemini-3.1-flash-lite-preview or gemini-2.0-flash)
   if (creds.google_api_key) {
     try {
-      const model = "gemini-2.5-flash";
+      const model = "gemini-3.1-flash-lite-preview";
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${creds.google_api_key}`,
         {
@@ -170,7 +170,7 @@ async function llm(prompt: string, sys: string, creds: Credentials): Promise<str
   }
 
   if (attempts.length === 0) {
-    throw new Error("No LLM keys configured. Run `jimmy sync-credentials` to push your API keys to Supabase.");
+    throw new Error("No LLM keys configured. Run `jerob sync-credentials` to push your API keys to Supabase.");
   }
 
   // Surface all individual errors so you know exactly what failed
@@ -455,10 +455,25 @@ Deno.serve(async (req: Request) => {
         results.push({ taskId: task.id, name: task.name, status: success ? "success" : "partial" });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+
+        // Classify error for the client to display meaningfully
+        let classified = msg;
+        if (/invalid.?api.?key|api key|unauthorized|401/i.test(msg)) {
+          classified = `LLM API Key Error: ${msg}`;
+        } else if (/quota|rate.?limit|429|too many requests/i.test(msg)) {
+          classified = `Rate Limit / Quota: ${msg}`;
+        } else if (/no llm keys|all llm providers failed/i.test(msg)) {
+          classified = `No LLM Keys Configured: ${msg}`;
+        } else if (/gmail|refresh.?token|oauth/i.test(msg)) {
+          classified = `Gmail Auth Error: ${msg}`;
+        } else if (/firecrawl|search failed|crawl failed/i.test(msg)) {
+          classified = `Web Search/Crawl Error: ${msg}`;
+        }
+
         if (runId) {
           await db.from("scheduler_runs").update({
             status: "failed",
-            error: msg,
+            error: classified,
             output: "",
             step_results: [],
             finished_at: now,
@@ -469,7 +484,7 @@ Deno.serve(async (req: Request) => {
           next_run_at: computeNextRun(task.cron),
           updated_at: now,
         }).eq("id", task.id);
-        results.push({ taskId: task.id, name: task.name, status: "failed", error: msg });
+        results.push({ taskId: task.id, name: task.name, status: "failed", error: classified });
       }
     })
   );

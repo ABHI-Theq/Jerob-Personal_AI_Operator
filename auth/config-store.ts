@@ -18,6 +18,7 @@ export interface StoredConfig {
   telegramOwnerId?: string;
   supabaseUrl?: string;
   supabaseServiceRoleKey?: string;
+  supabaseAccessToken?: string;   // personal access token for Management API (setup only)
   googleClientId?: string;
   googleClientSecret?: string;
   firecrawlKey?: string;

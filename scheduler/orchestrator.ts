@@ -327,12 +327,58 @@ async function manageTask() {
       } else {
         console.log(chalk.bold("\nRun History (last 10):\n"));
         runs.forEach((r, i) => {
-          const icon = r.status === "success" ? chalk.green("✓") : r.status === "failed" ? chalk.red("✖") : chalk.yellow("⟳");
-          console.log(`${i + 1}. ${icon} ${fmtDate(r.started_at)} — ${r.status}`);
-          if (r.output) console.log(chalk.dim(`   ${r.output.slice(0, 200)}`));
-          if (r.error) console.log(chalk.red(`   Error: ${r.error.slice(0, 200)}`));
+          const icon =
+            r.status === "success" ? chalk.green("✓") :
+            r.status === "failed"  ? chalk.red("✖") :
+            chalk.yellow("⟳");
+          console.log(`${i + 1}. ${icon} ${fmtDate(r.started_at)} — ${chalk.bold(r.status)}`);
+
+          // Show step-level results
+          if (Array.isArray(r.step_results) && r.step_results.length > 0) {
+            r.step_results.forEach((s: any) => {
+              const stepIcon = s.success ? chalk.green("  ✓") : chalk.red("  ✖");
+              console.log(`${stepIcon} Step ${s.order} [${s.type ?? "?"}]: ${String(s.output ?? "").slice(0, 180)}`);
+            });
+          }
+
+          // Top-level error — classify it for the user
+          if (r.error) {
+            const err = r.error;
+            let category = chalk.red("Error");
+            let hint = "";
+
+            if (/invalid.?api.?key|api key|unauthorized|401/i.test(err)) {
+              category = chalk.red("LLM API Key Error");
+              hint = "  → Run `jerob set-key` to update your API keys, then `jerob sync-credentials`";
+            } else if (/quota|rate.?limit|429|too many requests/i.test(err)) {
+              category = chalk.yellow("Rate Limit / Quota");
+              hint = "  → Your API key hit its limit. Try a different provider or wait.";
+            } else if (/no llm keys|no api key|all llm providers failed/i.test(err)) {
+              category = chalk.red("No LLM Keys Configured");
+              hint = "  → Run `jerob sync-credentials` to push your keys to Supabase.";
+            } else if (/gmail|refresh.?token|oauth/i.test(err)) {
+              category = chalk.red("Gmail Auth Error");
+              hint = "  → Re-authenticate Gmail: run `jerob jet` and use an email operation.";
+            } else if (/firecrawl|search failed|crawl failed/i.test(err)) {
+              category = chalk.yellow("Web Search/Crawl Error");
+              hint = "  → Check your FIRECRAWL_KEY or the target URL.";
+            } else if (/supabase|database|relation|table/i.test(err)) {
+              category = chalk.red("Database Error");
+              hint = "  → Run `jerob setup-db` to verify your schema is up to date.";
+            } else if (/fetch|network|ECONNREFUSED|timeout/i.test(err)) {
+              category = chalk.yellow("Network Error");
+              hint = "  → Transient network issue. The task will retry next scheduled run.";
+            }
+
+            console.log(chalk.red(`   ${category}: ${err.slice(0, 300)}`));
+            if (hint) console.log(chalk.dim(hint));
+          }
+
+          if (r.output && r.status !== "failed") {
+            console.log(chalk.dim(`   Output: ${r.output.slice(0, 200)}`));
+          }
+          console.log();
         });
-        console.log();
       }
     }
 

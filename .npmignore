@@ -1,0 +1,26 @@
+# Never publish these
+.env
+.env.*
+!.env.example
+
+# Local data
+node_modules/
+bun.lock
+
+# Dev/internal docs
+CLEANUP-SUMMARY.md
+browser-agent-report-*.md
+plan.md
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.kiro/
+*.md.bak
+
+# Supabase local dev
+supabase/.branches/
+supabase/.temp/
+supabase/supabase/

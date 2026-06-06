@@ -1,4 +1,4 @@
-import { isAuth } from "./email_pass_store";
+import { isAuth, isAccessTokenFresh, removeConfig } from "./email_pass_store";
 import { oauth2Client } from "./email_server";
 import { authenticate } from "./email_init";
 import { google } from "googleapis";
@@ -27,7 +27,8 @@ import type {
 
 // ─── Gmail client ────────────────────────────────────────────────────────────
 
-const getGmailClient = async () => {
+/** Returns a token string, triggering OAuth if not stored. */
+const getRefreshToken = async (): Promise<string> => {
   let ref = isAuth();
   if (ref === null) {
     console.log(chalk.green.bold("Gmail not authenticated — starting OAuth flow..."));
@@ -37,12 +38,52 @@ const getGmailClient = async () => {
     } catch (err) {
       throw new Error(
         `Gmail OAuth failed: ${err instanceof Error ? err.message : String(err)}. ` +
-        `Make sure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in .env.`
+          `Make sure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in .env.`
       );
     }
-    if (!ref) throw new Error("Gmail OAuth completed but no refresh token was returned. Try revoking access at myaccount.google.com/permissions and re-authenticating.");
+    if (!ref)
+      throw new Error(
+        "Gmail OAuth completed but no refresh token was returned. Try revoking access at myaccount.google.com/permissions and re-authenticating."
+      );
   }
+  return ref;
+};
+
+const getGmailClient = async () => {
+  const ref = await getRefreshToken();
   oauth2Client.setCredentials({ refresh_token: ref });
+
+  // Skip the network probe if the stored access token is still fresh
+  if (!isAccessTokenFresh()) {
+    try {
+      await oauth2Client.getAccessToken();
+    } catch (err: any) {
+      const msg: string = err?.message ?? String(err);
+      const isRevoked =
+        msg.includes("invalid_grant") ||
+        msg.includes("Token has been expired") ||
+        msg.includes("revoked");
+
+      if (isRevoked) {
+        console.log(chalk.yellow("⚠ Refresh token rejected by Google — clearing stored credentials and re-authenticating..."));
+        removeConfig();
+        try {
+          const result = (await authenticate()) as any;
+          const newRef = result?.refresh_token ?? null;
+          if (!newRef) throw new Error("No refresh token returned after re-authentication.");
+          oauth2Client.setCredentials({ refresh_token: newRef });
+        } catch (authErr) {
+          throw new Error(
+            `Re-authentication failed: ${authErr instanceof Error ? authErr.message : String(authErr)}`
+          );
+        }
+      } else {
+        // Network error or transient failure — don't wipe credentials
+        throw new Error(`Gmail token refresh failed: ${msg}`);
+      }
+    }
+  }
+
   return google.gmail({ version: "v1", auth: oauth2Client });
 };
 

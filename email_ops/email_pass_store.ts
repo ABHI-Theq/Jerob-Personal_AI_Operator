@@ -1,32 +1,25 @@
 import { homedir } from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import crypto from "node:crypto";
 
-const GOOGLE_CONFIG_DIR = path.join(homedir(), ".cccontrol","/googleAuth");
+const GOOGLE_CONFIG_DIR = path.join(homedir(), ".cccontrol", "/googleAuth");
 const GOOGLE_CONFIG_FILE = path.join(GOOGLE_CONFIG_DIR, "google_config.json");
 
-const ALGORITHM = "aes-256-cbc";
-const ITERATIONS = 100000;
-const KEY_LENGTH = 32;
-
-export type GoogleConfig={
-    // access_token:string;
-    refresh_token:string;
-    scope:string;
-    token_type:string;
-    refresh_token_expires_in:number;
-    createdAt:number
-}
+export type GoogleConfig = {
+  access_token?: string;
+  refresh_token: string;
+  scope: string;
+  token_type: string;
+  /** Access token expiry as ms epoch timestamp (from Google's expiry_date field) */
+  expiry_date?: number;
+  createdAt: number;
+};
 
 export function ensureConfigDir(): void {
   if (!fs.existsSync(GOOGLE_CONFIG_DIR)) {
     fs.mkdirSync(GOOGLE_CONFIG_DIR, { recursive: true });
   }
 }
-
-
-
 
 export function saveConfig(config: GoogleConfig): void {
   ensureConfigDir();
@@ -45,25 +38,20 @@ export function loadConfig(): GoogleConfig | null {
   }
 }
 
-export const isAuth = () => {
-    const config = loadConfig();
+/** Returns the refresh token if auth looks valid, null if re-auth is needed. */
+export const isAuth = (): string | null => {
+  const config = loadConfig();
+  if (!config?.refresh_token) return null;
+  // Standard prod: Google doesn't expose refresh token expiry — rely on invalid_grant at use time
+  return config.refresh_token;
+};
 
-    if (!config) {
-        return null;
-    }
-
-    if (
-        !config.refresh_token ||
-        !config.refresh_token_expires_in
-    ) {
-        return null;
-    }
-
-    const expiry =
-        config.createdAt +
-        config.refresh_token_expires_in * 1000;
-
-    return expiry > Date.now()?config.refresh_token:null;
+/** Returns true if the stored access token is still valid (saves a network call). */
+export const isAccessTokenFresh = (): boolean => {
+  const config = loadConfig();
+  if (!config?.access_token || !config.expiry_date) return false;
+  // Give a 60s buffer before actual expiry
+  return config.expiry_date > Date.now() + 60_000;
 };
 
 export function removeConfig(): void {

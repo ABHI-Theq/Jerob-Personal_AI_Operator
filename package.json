@@ -1,10 +1,54 @@
 {
   "name": "jerob",
+  "version": "1.0.0",
+  "description": "Personal AI agent CLI — autonomous code agent, planner, browser automation, Q&A, and serverless scheduler",
   "module": "index.ts",
-  "private": true,
+  "private": false,
   "type": "module",
   "bin": {
-    "jerob": "./index.ts"
+    "jerob": "./bin/jerob.js"
+  },
+  "files": [
+    "bin/",
+    "index.ts",
+    "agent/",
+    "ask/",
+    "auth/",
+    "CLI/",
+    "config/",
+    "email_ops/",
+    "plan/",
+    "scheduler/",
+    "supabase/",
+    "tui/",
+    "utils/",
+    "tsconfig.json",
+    "README.md",
+    "SETUP.md"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "llm",
+    "automation",
+    "browser-automation",
+    "scheduler",
+    "supabase",
+    "openrouter",
+    "gemini",
+    "claude",
+    "terminal"
+  ],
+  "author": "Abhishek Sharma",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ABHI-Theq/Jerob-Personal_AI_Operator.git"
+  },
+  "homepage": "https://github.com/ABHI-Theq/Jerob-Personal_AI_Operator#readme",
+  "engines": {
+    "node": ">=18"
   },
   "devDependencies": {
     "@types/bun": "latest"

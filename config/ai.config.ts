@@ -5,29 +5,27 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { LanguageModel } from "ai";
 
-// ── Hardcoded defaults — used when no override is set ─────────────────────────
+// ── Defaults — used when no MODEL_* override is set ──────────────────────────
 export const DEFAULT_MODELS = {
-  openrouter_free: "openrouter/free",           // OpenRouter free tier router
-  openrouter_paid: "anthropic/claude-3.5-sonnet", // best model on OpenRouter paid
-  gemini:  "gemini-2.0-flash",
+  openrouter_free: "openrouter/free",
+  openrouter_paid: "anthropic/claude-3.5-sonnet",
+  gemini:  "gemini-3.1-flash-lite-preview",
   claude:  "claude-3-5-sonnet-20241022",
   openai:  "gpt-4o-mini",
   groq:    "llama-3.3-70b-versatile",
 } as const;
 
 // ── Active model per provider ─────────────────────────────────────────────────
-// MODEL_* env vars are written by auth/env-writer.ts from the stored modelOverrides.
-// If the user set a custom model via `jimmy set-key → switch`, it appears here.
+// MODEL_* env vars are written by auth/env-writer.ts from stored modelOverrides.
 function activeModel(provider: keyof typeof DEFAULT_MODELS): string {
-  const overrideKey = `MODEL_${provider.toUpperCase().replace("-", "_")}`;
-  return process.env[overrideKey]?.trim() || DEFAULT_MODELS[provider];
+  const key = `MODEL_${provider.toUpperCase().replace("-", "_")}`;
+  return process.env[key]?.trim() || DEFAULT_MODELS[provider];
 }
 
 // ── Provider builders ─────────────────────────────────────────────────────────
 
 function openrouterModel(modelId: string): LanguageModel | null {
   const key = process.env.OPENROUTER_KEY?.trim();
-  // OpenRouter keys start with sk-or-v1- — skip if key looks invalid
   if (!key || !key.startsWith("sk-or-v1-")) return null;
   return createOpenRouter({ apiKey: key })(modelId);
 }
@@ -58,10 +56,15 @@ function groqModel(modelId?: string): LanguageModel | null {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Returns providers in the exact order the user chose during setup:
+ * [primary, ...optionalFallbacks, groq]
+ * Written to PREFERRED_PROVIDERS by auth/env-writer.ts.
+ */
 function preferredProviders(): string[] {
   const raw = process.env.PREFERRED_PROVIDERS;
   if (raw) return raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return ["groq"]; // safe always-free default
+  return ["groq"];
 }
 
 function modelForProvider(provider: string): LanguageModel | null {
@@ -84,7 +87,7 @@ function firstAvailable(
   }
   throw new Error(
     `No AI model available for ${name}. ` +
-    `Run \`jimmy set-key\` to add API keys or switch models.`
+    `Run \`jerob set-key\` to add API keys or switch models.`
   );
 }
 
@@ -93,32 +96,26 @@ function firstAvailable(
 /**
  * Primary model — Agent, Plan, Ask modes.
  *
- * OpenRouter decision:
- *   OPENROUTER_KEY present?
- *     OPENROUTER_TIER=paid → uses MODEL_OPENROUTER_PAID (default: claude-3.5-sonnet)
- *                            User can customise via `jimmy set-key → switch model`
- *     OPENROUTER_TIER=free → always uses "openrouter/free" (no custom model for free)
- *     no key               → skips OpenRouter entirely
- *
- * Then falls through to PREFERRED_PROVIDERS in user-chosen order.
+ * Order:
+ *   1. OpenRouter (paid model or free slug, if key present)
+ *   2. User's chosen providers in their selected order (PREFERRED_PROVIDERS)
+ *      — primary first, optional fallbacks after, groq always last
  */
 export function getAgentModel(): LanguageModel {
-  const tier   = process.env.OPENROUTER_TIER ?? "free";
-  const orKey  = process.env.OPENROUTER_KEY?.trim();
+  const tier  = process.env.OPENROUTER_TIER ?? "free";
+  const orKey = process.env.OPENROUTER_KEY?.trim();
 
   const candidates: Array<() => LanguageModel | null> = [];
 
   if (orKey) {
-    if (tier === "paid") {
-      // Paid: use user's chosen model or the default paid model
-      const model = activeModel("openrouter_paid");
-      candidates.push(() => openrouterModel(model));
-    } else {
-      // Free: always openrouter/free — no user customisation, it's a routing slug
-      candidates.push(() => openrouterModel(DEFAULT_MODELS.openrouter_free));
-    }
+    candidates.push(
+      tier === "paid"
+        ? () => openrouterModel(activeModel("openrouter_paid"))
+        : () => openrouterModel(DEFAULT_MODELS.openrouter_free)
+    );
   }
 
+  // Respect user's chosen order exactly
   for (const p of preferredProviders()) {
     candidates.push(() => modelForProvider(p));
   }
@@ -128,28 +125,32 @@ export function getAgentModel(): LanguageModel {
 
 /**
  * Secondary model — Scheduler planner, Browser Agent evaluator.
- * Does NOT use OpenRouter to avoid content refusals on structured prompts.
- * Tries preferred providers → Groq as last resort.
+ * Skips OpenRouter to avoid content refusals on structured prompts.
+ * Uses the same user-defined provider order as the primary model.
  */
 export function getAgentModel2(): LanguageModel {
-  const candidates = preferredProviders().map((p) => () => modelForProvider(p));
-  candidates.push(() => groqModel()); // groq always last resort
+  const providers = preferredProviders();
+  const candidates = providers.map((p) => () => modelForProvider(p));
+  // Groq is already last in preferredProviders from setup, but ensure it's there
+  if (!providers.includes("groq")) {
+    candidates.push(() => groqModel());
+  }
   return firstAvailable(candidates, "Model2");
 }
 
 /**
  * Fallback model — when primary refuses or hits rate limits.
- * OpenRouter free → Groq → Gemini flash.
+ * Uses user's provider order, then falls back to openrouter/free → groq.
  */
 export function getAgentModel2Fallback(): LanguageModel {
-  return firstAvailable(
-    [
-      () => openrouterModel(DEFAULT_MODELS.openrouter_free),
-      () => groqModel(),
-      () => geminiModel("gemini-2.5-flash"),
-    ],
-    "Fallback"
+  const providers = preferredProviders();
+  const candidates: Array<() => LanguageModel | null> = providers.map(
+    (p) => () => modelForProvider(p)
   );
+  // Final safety nets
+  candidates.push(() => openrouterModel(DEFAULT_MODELS.openrouter_free));
+  if (!providers.includes("groq")) candidates.push(() => groqModel());
+  return firstAvailable(candidates, "Fallback");
 }
 
 /**

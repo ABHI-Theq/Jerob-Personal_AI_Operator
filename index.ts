@@ -25,11 +25,18 @@ program.command("jet")
                 if (v) {
                     process.env[k] = v;
                 } else {
-                    // Clear any stale value dotenv may have pre-loaded from .env
                     delete process.env[k];
                 }
             }
             process.env.OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/free";
+
+            // Auto-sync credentials to Supabase on every login — non-fatal
+            if (keys.SUPABASE_URL && keys.SUPABASE_SERVICE_ROLE_KEY) {
+                import("./scheduler/config-sync")
+                    .then(({ syncAllSecrets }) => syncAllSecrets())
+                    .catch(() => {}); // silent — don't block startup
+            }
+
             await startArena()
         } catch (error) {
             if (error instanceof Error && error.message.includes("cancelled")) {
@@ -108,6 +115,48 @@ program.command("sync-credentials")
     } catch (error) {
         console.log(chalk.red("Sync failed"));
         console.log(chalk.red(error instanceof Error ? error.message : String(error)));
+        process.exit(1);
+    }
+});
+
+program.command("setup-db")
+.description("Run Supabase schema migrations (creates tables, RLS policies, pg_cron schedule)")
+.action(async () => {
+    try {
+        const { config, password } = await authenticate();
+        const keys = getAllKeys(config, password);
+        const url = keys.SUPABASE_URL;
+        const key = keys.SUPABASE_SERVICE_ROLE_KEY;
+        let token = keys.SUPABASE_ACCESS_TOKEN;
+
+        if (!url || !key) {
+            console.log(chalk.yellow("\n⚠ Supabase URL or service role key not configured."));
+            console.log(chalk.dim("  Run `jerob set-key` to add them first.\n"));
+            process.exit(1);
+        }
+
+        // If no stored token, prompt for it now
+        if (!token) {
+            const { text: promptText, isCancel } = await import("@clack/prompts");
+            console.log(chalk.dim("\n  Get your personal access token at: https://supabase.com/dashboard/account/tokens\n"));
+            const t = await promptText({
+                message: "Supabase personal access token:",
+                placeholder: "sbp_...",
+                validate: (v) => { if (!v?.trim()) return "Token required"; },
+            });
+            if (isCancel(t)) { console.log(chalk.yellow("\n✓ Cancelled\n")); return; }
+            token = String(t).trim();
+        }
+
+        const { runDbMigrations } = await import("./scheduler/db-migrate");
+        await runDbMigrations(url, key, token);
+    } catch (error) {
+        if (error instanceof Error && error.message.includes("cancelled")) {
+            console.log(chalk.yellow("\n✓ Cancelled\n"));
+        } else {
+            console.log(chalk.red("Migration failed"));
+            console.log(chalk.red(error instanceof Error ? error.message : String(error)));
+        }
         process.exit(1);
     }
 });

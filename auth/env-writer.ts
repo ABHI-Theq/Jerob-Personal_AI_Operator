@@ -1,6 +1,6 @@
 /**
- * Writes/updates the project .env file from decrypted keys stored in ~/.cccontrol/config.json.
- * Called after login so no user ever needs to manually create a .env file.
+ * Writes/updates the project .env file from decrypted keys.
+ * Called after login — no user ever needs to manually create a .env file.
  * Keys that are empty are omitted. Existing .env entries NOT in our key set are preserved.
  */
 
@@ -9,8 +9,6 @@ import path from "node:path";
 
 const ENV_PATH = path.resolve(process.cwd(), ".env");
 
-// Keys we own and manage — any other lines in .env are left untouched
-// PORT is intentionally excluded — handled separately below so it's never blanked out
 const MANAGED_KEYS = new Set([
   "OPENROUTER_KEY",
   "OPENROUTER_MODEL",
@@ -23,6 +21,7 @@ const MANAGED_KEYS = new Set([
   "TELEGRAM_OWNER_ID",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_ACCESS_TOKEN",
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "FIRECRAWL_KEY",
@@ -35,56 +34,47 @@ const MANAGED_KEYS = new Set([
   "MODEL_CLAUDE",
   "MODEL_OPENAI",
   "MODEL_GROQ",
+  "PORT",
 ]);
 
-/**
- * Merge keys into .env.
- * - Creates the file if it doesn't exist.
- * - Updates managed keys in-place (preserving line order).
- * - Appends newly added managed keys at the bottom.
- * - Never touches unmanaged lines (comments, user-added vars).
- */
 export function writeEnvFile(keys: Record<string, string>): void {
-  // Read existing lines
+  // PORT is always 8787
+  keys["PORT"] = "8787";
+
   let existingLines: string[] = [];
   if (fs.existsSync(ENV_PATH)) {
     existingLines = fs.readFileSync(ENV_PATH, "utf8").split("\n");
   }
 
   const written = new Set<string>();
-  const seenLines = new Set<string>(); // track to deduplicate repeated blank keys
+  const seenKeys = new Set<string>();
 
-  // Update existing managed lines in-place, deduplicate PORT
   const updatedLines = existingLines
     .map((line) => {
       const match = line.match(/^([A-Z_][A-Z0-9_]*)=/);
-      if (!match) return line; // comment, blank line — keep as-is
+      if (!match) return line; // comment or blank — keep as-is
       const key = match[1]!;
 
-      // Deduplicate: drop repeated occurrences of the same key
-      if (seenLines.has(key)) return null;
-      seenLines.add(key);
+      // Drop duplicate occurrences of the same key
+      if (seenKeys.has(key)) return null;
+      seenKeys.add(key);
 
-      if (!MANAGED_KEYS.has(key)) return line; // not our key — keep as-is
-      const value = keys[key];
+      if (!MANAGED_KEYS.has(key)) return line; // not ours — keep as-is
+
       written.add(key);
-      if (!value) return `${key}=`; // clear stale value
+      const value = keys[key];
+      // Always write a value for PORT; omit blank non-PORT managed keys
+      if (!value) return key === "PORT" ? `PORT=8787` : `${key}=`;
       return `${key}=${value}`;
     })
     .filter((line): line is string => line !== null);
 
-  // Append any managed keys that weren't already in the file
+  // Append managed keys not yet in the file
   const newLines: string[] = [];
   for (const [key, value] of Object.entries(keys)) {
-    if (value && MANAGED_KEYS.has(key) && !written.has(key)) {
+    if (MANAGED_KEYS.has(key) && !written.has(key) && value) {
       newLines.push(`${key}=${value}`);
     }
-  }
-
-  // PORT: only append if not already present with a value in the file
-  const portLine = updatedLines.find((l) => l.match(/^PORT=\S+/));
-  if (!portLine) {
-    newLines.push("PORT=8787");
   }
 
   const final = [...updatedLines, ...newLines].join("\n").trimEnd() + "\n";
