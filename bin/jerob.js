@@ -1,11 +1,13 @@
 #!/usr/bin/env node
+
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+
 /**
  * npm entry point for jerob.
  * Requires Bun to be installed: https://bun.sh
  * Shells out to Bun so the TypeScript source runs natively.
  */
-const { execFileSync } = require("node:child_process");
-const path = require("node:path");
 
 // Check Bun is available
 try {
