@@ -15,7 +15,7 @@ import { defaultAgentConfig } from '../agent/types.ts';
 import { createWebTools } from './web-tools.ts';
 import type { Plan, PlanStep } from './index.ts';
 import { getAgentModel } from '../config/ai.config.ts';
-import { withLLMRetry, parseLLMError } from '../utils/llm-error';
+import { withLLMRetry, parseLLMError } from '../utils/llm-error.ts';
 
 const planSchema = z.object({
   researchSummary: z.string().optional(),
